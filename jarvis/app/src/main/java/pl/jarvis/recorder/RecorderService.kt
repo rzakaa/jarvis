@@ -14,7 +14,6 @@ import android.content.pm.ServiceInfo
 import android.graphics.drawable.Icon
 import android.media.AudioFormat
 import android.media.AudioRecord
-import android.media.MediaRecorder
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -213,19 +212,23 @@ class RecorderService : Service() {
      */
     @SuppressLint("MissingPermission") // sprawdzane w recordLoop()
     private fun openMicrophone(): Pair<AudioRecord, Int> {
+        val source = RecorderState.micSource.value
         for (rate in CAPTURE_RATES) {
             val minBuffer = AudioRecord.getMinBufferSize(
                 rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
             )
             if (minBuffer <= 0) continue
             val record = AudioRecord(
-                MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                source.androidSource,
                 rate,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
                 maxOf(minBuffer, rate / 2 * 2), // pół sekundy zapasu
             )
-            if (record.state == AudioRecord.STATE_INITIALIZED) return record to rate
+            if (record.state == AudioRecord.STATE_INITIALIZED) {
+                RecorderState.micInfo.value = "$rate Hz · ${source.label}"
+                return record to rate
+            }
             record.release()
         }
         throw IllegalStateException("nie udało się otworzyć mikrofonu")

@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import pl.jarvis.recorder.MicSource
 import pl.jarvis.recorder.Prefs
 import pl.jarvis.recorder.RecorderService
 import pl.jarvis.recorder.RecorderState
@@ -110,6 +111,7 @@ fun MainScreen() {
             item { Header() }
             item { StatusCard(status, onToggle) }
             item { SensitivityRow() }
+            item { MicSourceRow(status) }
             error?.let { message ->
                 item { Text(message, color = MaterialTheme.colorScheme.error) }
             }
@@ -180,7 +182,7 @@ private fun Header() {
             color = MaterialTheme.colorScheme.primary,
         )
         Text(
-            "Etap 1: rejestrator rozmów",
+            "Etap 1: rejestrator rozmów · wersja 0.3",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -249,6 +251,38 @@ private fun SensitivityRow() {
                 )
             }
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MicSourceRow(status: RecorderStatus) {
+    val context = LocalContext.current
+    val source by RecorderState.micSource.collectAsState()
+    val info by RecorderState.micInfo.collectAsState()
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("Źródło mikrofonu", style = MaterialTheme.typography.titleSmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            MicSource.entries.forEach { option ->
+                FilterChip(
+                    selected = option == source,
+                    onClick = {
+                        RecorderState.micSource.value = option
+                        Prefs.setMicSource(context, option)
+                    },
+                    label = { Text(option.label) },
+                )
+            }
+        }
+        Text(
+            if (status == RecorderStatus.STOPPED) {
+                "Zmiana działa po włączeniu nasłuchiwania."
+            } else {
+                "Teraz: ${info ?: "?"}. Zmiana działa po Wyłącz → Włącz."
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

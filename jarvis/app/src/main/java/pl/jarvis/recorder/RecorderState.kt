@@ -1,6 +1,7 @@
 package pl.jarvis.recorder
 
 import android.content.Context
+import android.media.MediaRecorder
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import java.io.File
@@ -19,11 +20,22 @@ enum class Sensitivity(val label: String, val marginDb: Float, val minDb: Float)
     HIGH("Wysoka", 7f, -58f),
 }
 
+/** Z którego „źródła” Androida brać dźwięk. Urządzenia (i emulator) obsługują je różnie. */
+enum class MicSource(val label: String, val androidSource: Int) {
+    MIC("Mikrofon", MediaRecorder.AudioSource.MIC),
+    VOICE_RECOGNITION("Mowa", MediaRecorder.AudioSource.VOICE_RECOGNITION),
+    VOICE_COMMUNICATION("Rozmowa", MediaRecorder.AudioSource.VOICE_COMMUNICATION),
+}
+
 /** Stan rejestratora współdzielony przez usługę w tle i ekran aplikacji. */
 object RecorderState {
     val status = MutableStateFlow(RecorderStatus.STOPPED)
     val levelDb = MutableStateFlow(SILENCE_DB)
     val sensitivity = MutableStateFlow(Sensitivity.MEDIUM)
+    val micSource = MutableStateFlow(MicSource.MIC)
+
+    /** Z czym faktycznie otworzył się mikrofon, np. „48000 Hz · Mikrofon”. */
+    val micInfo = MutableStateFlow<String?>(null)
     val error = MutableStateFlow<String?>(null)
 
     /** Plik, który właśnie jest nagrywany – ukrywamy go na liście, dopóki się nie zakończy. */
@@ -38,6 +50,7 @@ object RecorderState {
 object Prefs {
     private const val WANTS_RECORDING = "wants_recording"
     private const val SENSITIVITY = "sensitivity"
+    private const val MIC_SOURCE = "mic_source"
 
     private fun prefs(context: Context) =
         context.getSharedPreferences("jarvis", Context.MODE_PRIVATE)
@@ -55,4 +68,12 @@ object Prefs {
 
     fun setSensitivity(context: Context, value: Sensitivity) =
         prefs(context).edit().putString(SENSITIVITY, value.name).apply()
+
+    fun micSource(context: Context): MicSource {
+        val name = prefs(context).getString(MIC_SOURCE, null) ?: return MicSource.MIC
+        return MicSource.entries.firstOrNull { it.name == name } ?: MicSource.MIC
+    }
+
+    fun setMicSource(context: Context, value: MicSource) =
+        prefs(context).edit().putString(MIC_SOURCE, value.name).apply()
 }

@@ -19,6 +19,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         RecorderState.sensitivity.value = Prefs.sensitivity(this)
+        RecorderState.micSource.value = Prefs.micSource(this)
         setContent {
             JarvisTheme {
                 MainScreen()
