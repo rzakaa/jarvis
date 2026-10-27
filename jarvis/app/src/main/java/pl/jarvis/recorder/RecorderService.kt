@@ -19,6 +19,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.os.Process
 import pl.jarvis.MainActivity
 import pl.jarvis.R
 import java.io.File
@@ -113,21 +114,13 @@ class RecorderService : Service() {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             throw IllegalStateException("brak uprawnienia do mikrofonu")
         }
+        // Nagrywanie to najważniejsza praca aplikacji – nie może gubić dźwięku.
+        Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
         val sampleRate = Recordings.SAMPLE_RATE
-        val minBuffer = AudioRecord.getMinBufferSize(
-            sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
-        )
-        val record = AudioRecord(
-            MediaRecorder.AudioSource.VOICE_RECOGNITION,
-            sampleRate,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT,
-            maxOf(minBuffer, FRAME_SAMPLES * 2 * 20),
-        )
-        if (record.state != AudioRecord.STATE_INITIALIZED) {
-            record.release()
-            throw IllegalStateException("nie udało się otworzyć mikrofonu")
-        }
+        val (record, captureRate) = openMicrophone()
+        val factor = captureRate / sampleRate
+        val decimator = Decimator(factor)
+        val captureFrame = ShortArray(FRAME_SAMPLES * factor)
 
         val token = Any()
         currentLoop = token
@@ -158,13 +151,14 @@ class RecorderService : Service() {
         record.startRecording()
         try {
             while (running) {
-                val frame = ShortArray(FRAME_SAMPLES)
-                var read = 0
-                while (read < FRAME_SAMPLES && running) {
-                    val n = record.read(frame, read, FRAME_SAMPLES - read)
+                var captured = 0
+                while (captured < captureFrame.size && running) {
+                    val n = record.read(captureFrame, captured, captureFrame.size - captured)
                     if (n < 0) throw IllegalStateException("mikrofon zwrócił błąd $n")
-                    read += n
+                    captured += n
                 }
+                val frame = decimator.process(captureFrame, captured)
+                val read = frame.size
                 if (read == 0) continue
 
                 val db = levelDb(frame, read)
@@ -211,6 +205,30 @@ class RecorderService : Service() {
             // Jeśli w międzyczasie ruszyło nowe nasłuchiwanie, nie nadpisujemy jego stanu.
             if (currentLoop === token) RecorderState.status.value = RecorderStatus.STOPPED
         }
+    }
+
+    /**
+     * Otwiera mikrofon w jego natywnej jakości (48 kHz), a dopiero gdy to się nie uda – w 16 kHz.
+     * Część urządzeń (m.in. emulator) źle przelicza dźwięk na 16 kHz i nagrywa wtedy trzaski.
+     */
+    @SuppressLint("MissingPermission") // sprawdzane w recordLoop()
+    private fun openMicrophone(): Pair<AudioRecord, Int> {
+        for (rate in CAPTURE_RATES) {
+            val minBuffer = AudioRecord.getMinBufferSize(
+                rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
+            )
+            if (minBuffer <= 0) continue
+            val record = AudioRecord(
+                MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                rate,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+                maxOf(minBuffer, rate / 2 * 2), // pół sekundy zapasu
+            )
+            if (record.state == AudioRecord.STATE_INITIALIZED) return record to rate
+            record.release()
+        }
+        throw IllegalStateException("nie udało się otworzyć mikrofonu")
     }
 
     private fun setStatus(status: RecorderStatus) {
@@ -275,6 +293,7 @@ class RecorderService : Service() {
 
         // Jedna ramka = 30 ms dźwięku przy 16 kHz.
         private const val FRAME_SAMPLES = 480
+        private val CAPTURE_RATES = intArrayOf(48_000, Recordings.SAMPLE_RATE)
         private const val FRAMES_PER_SECOND = 33
 
         private const val PRE_ROLL_FRAMES = FRAMES_PER_SECOND // 1 s zapasu przed mową
