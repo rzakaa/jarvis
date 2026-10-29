@@ -81,6 +81,19 @@ class ClaudeBrain(
         }
     }
 
+    override fun completeJson(system: String, user: String): String {
+        val response = client.messages().create(
+            MessageCreateParams.builder()
+                .model(MODEL_FAST)
+                .maxTokens(2048L)
+                .system("$system\nOdpowiedz wyłącznie obiektem JSON, bez żadnego innego tekstu.")
+                .addUserMessage(user)
+                .build(),
+        )
+        return response.content().mapNotNull { it.text().orElse(null)?.text() }.joinToString("").trim()
+            .removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
+    }
+
     private fun params(): MessageCreateParams {
         val builder = MessageCreateParams.builder()
             .model(model)

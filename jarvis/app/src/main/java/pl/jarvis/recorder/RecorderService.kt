@@ -83,6 +83,9 @@ class RecorderService : Service() {
 
     private fun startRecording() {
         running = true
+        // Usługa może ruszyć bez ekranu (np. po restarcie) – skróty nagrań potrzebują Jarvisa.
+        Assistant.init(this)
+        Transcriber.startAuto(this)
         RecorderState.error.value = null
         RecorderState.status.value = RecorderStatus.LISTENING
         wakeLock = getSystemService(PowerManager::class.java)

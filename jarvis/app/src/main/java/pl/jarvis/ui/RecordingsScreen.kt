@@ -11,6 +11,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -48,6 +49,7 @@ import pl.jarvis.recorder.RecorderStatus
 import pl.jarvis.recorder.Recording
 import pl.jarvis.recorder.Recordings
 import pl.jarvis.recorder.Sensitivity
+import pl.jarvis.recorder.Transcriber
 import java.io.File
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -69,6 +71,7 @@ fun RecordingsScreen() {
     val player = remember { SimplePlayer() }
     DisposableEffect(Unit) { onDispose { player.stop() } }
     var toDelete by remember { mutableStateOf<Recording?>(null) }
+    var toRead by remember { mutableStateOf<Recording?>(null) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
@@ -95,11 +98,12 @@ fun RecordingsScreen() {
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item { HudLabel("rejestrator rozmów · wersja 0.24", color = Hud.Cyan, size = 13.sp) }
+        item { HudLabel("rejestrator rozmów · wersja 0.25", color = Hud.Cyan, size = 13.sp) }
         item { StatusPanel(status, onToggle) }
         item { SettingsPanel(status) }
         error?.let { message -> item { Text(message, color = Hud.Red, fontSize = 14.sp) } }
         item { BatteryHint(context) }
+        item { TranscriptionPanel() }
         item { TodaySummary(recordings) }
 
         recordings.groupBy { it.start.toLocalDate() }.forEach { (day, dayRecordings) ->
@@ -110,6 +114,7 @@ fun RecordingsScreen() {
                     isPlaying = player.current == recording.file,
                     onPlay = { player.toggle(recording.file) },
                     onDelete = { toDelete = recording },
+                    onRead = { toRead = recording },
                 )
             }
         }
@@ -123,12 +128,75 @@ fun RecordingsScreen() {
             confirmButton = {
                 TextButton(onClick = {
                     if (player.current == recording.file) player.stop()
-                    recording.file.delete()
+                    recording.relatedFiles.forEach { it.delete() }
                     RecorderState.recordingsChanged()
                     toDelete = null
                 }) { Text("Usuń", color = Hud.Red) }
             },
             dismissButton = { TextButton(onClick = { toDelete = null }) { Text("Anuluj") } },
+        )
+    }
+
+    toRead?.let { recording ->
+        AlertDialog(
+            onDismissRequest = { toRead = null },
+            title = { Text(recording.topic ?: "Nagranie z ${recording.start.format(timeFormat)}") },
+            text = {
+                LazyColumn {
+                    recording.summary?.let { item { Text(it, color = Hud.Cyan, modifier = Modifier.padding(bottom = 12.dp)) } }
+                    item { Text(recording.transcript ?: "Jeszcze nie przepisane.") }
+                }
+            },
+            confirmButton = { TextButton(onClick = { toRead = null }) { Text("Zamknij") } },
+        )
+    }
+}
+
+/** Zamiana nagrań na tekst: model w telefonie, przepisywanie podczas ładowania. */
+@Composable
+private fun TranscriptionPanel() {
+    val context = LocalContext.current
+    val status by Transcriber.status.collectAsState()
+    val progress by Transcriber.progress.collectAsState()
+    val pending by Transcriber.pending.collectAsState()
+    val error by Transcriber.error.collectAsState()
+    HudPanel(modifier = Modifier.fillMaxWidth(), title = "notatki z rozmów") {
+        HudLabel(
+            when (status) {
+                Transcriber.Status.NOT_DOWNLOADED -> "model mowy: nie pobrany (ok. ${Transcriber.SIZE_MB} mb)"
+                Transcriber.Status.DOWNLOADING -> "pobieram… ${(progress * 100).toInt()}%"
+                Transcriber.Status.READY -> if (pending > 0) "czeka na przepisanie: $pending" else "wszystko przepisane"
+                Transcriber.Status.WORKING -> "przepisuję… zostało $pending"
+                Transcriber.Status.ERROR -> "błąd: ${error ?: "?"}"
+            },
+            color = when (status) {
+                Transcriber.Status.ERROR -> Hud.Red
+                Transcriber.Status.READY -> Hud.Green
+                else -> Hud.Amber
+            },
+        )
+        if (status == Transcriber.Status.DOWNLOADING) {
+            LinearProgressIndicator(
+                progress = { progress },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
+                color = Hud.Cyan,
+                trackColor = Hud.CyanDim.copy(alpha = 0.3f),
+            )
+        }
+        when {
+            status == Transcriber.Status.NOT_DOWNLOADED || (status == Transcriber.Status.ERROR && !Transcriber.isDownloaded(context)) ->
+                HudButton("pobierz model", onClick = { Transcriber.download(context) }, filled = true, modifier = Modifier.padding(top = 8.dp))
+            (status == Transcriber.Status.READY || status == Transcriber.Status.ERROR) && pending > 0 ->
+                HudButton("przepisz teraz", onClick = { Transcriber.runPending(context) }, modifier = Modifier.padding(top = 8.dp))
+        }
+        Text(
+            "Tekst powstaje w telefonie – samo nagranie nigdy go nie opuszcza. Przepisuję sam, gdy telefon się ładuje. " +
+                "Ze skrótów Jarvis wyłapuje zadania (np. prośby klientów) i odpowiada na pytania o rozmowy.",
+            color = Hud.TextDim,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(top = 6.dp),
         )
     }
 }
@@ -255,12 +323,24 @@ private fun TodaySummary(recordings: List<Recording>) {
 }
 
 @Composable
-private fun RecordingRow(recording: Recording, isPlaying: Boolean, onPlay: () -> Unit, onDelete: () -> Unit) {
+private fun RecordingRow(
+    recording: Recording,
+    isPlaying: Boolean,
+    onPlay: () -> Unit,
+    onDelete: () -> Unit,
+    onRead: () -> Unit,
+) {
     HudPanel(modifier = Modifier.fillMaxWidth(), accent = if (isPlaying) Hud.Amber else Hud.CyanDim) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable(enabled = recording.transcript != null, onClick = onRead),
+            ) {
                 Text(recording.start.format(timeFormat), color = Hud.Text, fontFamily = Hud.Mono, fontSize = 17.sp)
-                HudLabel(formatDuration(recording.durationSeconds))
+                HudLabel(formatDuration(recording.durationSeconds) + (recording.topic?.let { " · $it" } ?: ""))
+                val preview = recording.summary ?: recording.transcript?.take(140)
+                if (!preview.isNullOrBlank()) Text(preview, color = Hud.TextDim, fontSize = 13.sp, maxLines = 3)
             }
             HudButton(if (isPlaying) "stop" else "▶", onClick = onPlay, accent = if (isPlaying) Hud.Amber else Hud.Cyan)
             HudButton("✕", onClick = onDelete, accent = Hud.Red, modifier = Modifier.padding(start = 8.dp))

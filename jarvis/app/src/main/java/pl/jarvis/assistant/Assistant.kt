@@ -17,11 +17,13 @@ import pl.jarvis.brain.AiBrain
 import pl.jarvis.brain.ClaudeBrain
 import pl.jarvis.brain.Ledger
 import pl.jarvis.brain.LedgerStore
+import pl.jarvis.brain.JarvisTools
 import pl.jarvis.brain.OpenAiCompatibleBrain
 import pl.jarvis.recorder.AiProvider
 import pl.jarvis.recorder.AssistantSettings
 import pl.jarvis.recorder.Prefs
 import pl.jarvis.recorder.RecorderState
+import pl.jarvis.recorder.Transcriber
 import java.io.File
 import java.time.LocalDateTime
 import java.util.Locale
@@ -105,6 +107,10 @@ object Assistant {
         localBrain = Brain(ledger)
         reloadSettings()
         PiperVoice.prepare(ctx)
+        // Nagrania: tekst → skrót, zadania i fakty; Jarvis może w nich szukać.
+        Transcriber.prepare(ctx)
+        Transcriber.onTranscribed = { c, wav, text -> RecordingNotes.process(c, wav, text) }
+        JarvisTools.recordingsSearch = { from, to, query -> RecordingNotes.search(ctx, from, to, query) }
         addMessage(
             ChatMessage(
                 false,
@@ -189,6 +195,17 @@ object Assistant {
         tts?.stop()
         PiperVoice.stop()
         handleText(text.trim())
+    }
+
+    /** Zadania i fakty wyłapane z nagranej rozmowy (wołane w tle). */
+    fun importFromRecording(tasks: List<String>, facts: List<String>) {
+        if (tasks.isEmpty() && facts.isEmpty()) return
+        handler.post {
+            val now = LocalDateTime.now()
+            tasks.forEach { ledger.addNote(now, it) }
+            facts.forEach { ledger.addMemory(now, it) }
+            dataChanged()
+        }
     }
 
     fun removeEntry(id: Long) {

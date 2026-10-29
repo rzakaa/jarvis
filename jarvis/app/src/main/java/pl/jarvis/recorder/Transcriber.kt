@@ -1,0 +1,204 @@
+package pl.jarvis.recorder
+
+import android.content.Context
+import android.os.BatteryManager
+import android.os.Process
+import android.util.Log
+import com.k2fsa.sherpa.onnx.FeatureConfig
+import com.k2fsa.sherpa.onnx.OfflineModelConfig
+import com.k2fsa.sherpa.onnx.OfflineNemoEncDecCtcModelConfig
+import com.k2fsa.sherpa.onnx.OfflineRecognizer
+import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
+import kotlinx.coroutines.flow.MutableStateFlow
+import pl.jarvis.assistant.VoiceDownloader
+import java.io.File
+import java.io.RandomAccessFile
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+
+/**
+ * Zamiana nagrań na tekst w telefonie (NeMo FastConformer CTC, wielojęzyczny z polskim, int8, ~100 MB).
+ * Audio nigdy nie opuszcza telefonu. Tekst zapisujemy obok nagrania: 14-03-21.wav → 14-03-21.txt.
+ *
+ * Przepisywanie rusza samo podczas ładowania telefonu (albo przyciskiem „przepisz teraz”).
+ * Po każdym przepisanym nagraniu wołamy [onTranscribed] – tam powstaje skrót.
+ */
+object Transcriber {
+    enum class Status { NOT_DOWNLOADED, DOWNLOADING, READY, WORKING, ERROR }
+
+    private const val TAG = "JarvisAsr"
+    private const val MODEL_DIR = "asr/nemo-fastconformer-ctc-int8"
+    private const val URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/" +
+        "sherpa-onnx-nemo-fast-conformer-ctc-be-de-en-es-fr-hr-it-pl-ru-uk-20k-int8.tar.bz2"
+    const val SIZE_MB = 98
+
+    /** Kawałki ok. 25 s, cięte w najcichszym miejscu między 18 a 30 s. */
+    private const val CHUNK_MIN_S = 18
+    private const val CHUNK_MAX_S = 30
+
+    val status = MutableStateFlow(Status.NOT_DOWNLOADED)
+    val progress = MutableStateFlow(0f)
+    val error = MutableStateFlow<String?>(null)
+
+    /** Ile nagrań czeka na przepisanie (podgląd na ekranie). */
+    val pending = MutableStateFlow(0)
+
+    /** Wołane w tle po przepisaniu nagrania (skrót, zadania, fakty). */
+    @Volatile
+    var onTranscribed: ((Context, File, String) -> Unit)? = null
+
+    private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "jarvis-asr") }
+    private val timer = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "jarvis-asr-timer").apply { isDaemon = true } }
+    private var recognizer: OfflineRecognizer? = null
+
+    @Volatile
+    private var queued = false
+    private var autoStarted = false
+
+    private fun dir(context: Context) = File(context.filesDir, MODEL_DIR)
+
+    fun isDownloaded(context: Context) =
+        File(dir(context), "model.int8.onnx").exists() && File(dir(context), "tokens.txt").exists()
+
+    fun transcriptOf(wav: File) = sibling(wav, "txt")
+
+    fun prepare(context: Context) {
+        if (status.value == Status.DOWNLOADING || status.value == Status.WORKING) return
+        status.value = if (isDownloaded(context)) Status.READY else Status.NOT_DOWNLOADED
+        updatePending(context)
+    }
+
+    fun download(context: Context) {
+        val ctx = context.applicationContext
+        if (status.value == Status.DOWNLOADING) return
+        status.value = Status.DOWNLOADING
+        progress.value = 0f
+        error.value = null
+        worker.execute {
+            try {
+                VoiceDownloader.downloadAndExtract(URL, dir(ctx)) { progress.value = it }
+                status.value = Status.READY
+            } catch (e: Exception) {
+                error.value = e.message
+                status.value = Status.ERROR
+            }
+        }
+    }
+
+    /** Raz na usługę: co 10 min, gdy telefon się ładuje, przepisuje zaległe nagrania. */
+    @Synchronized
+    fun startAuto(context: Context) {
+        if (autoStarted) return
+        autoStarted = true
+        val ctx = context.applicationContext
+        timer.scheduleWithFixedDelay({ if (isCharging(ctx)) runPending(ctx) }, 1, 10, TimeUnit.MINUTES)
+    }
+
+    /** Przepisuje wszystkie nagrania bez tekstu (po kolei, w tle). */
+    fun runPending(context: Context) {
+        val ctx = context.applicationContext
+        if (!isDownloaded(ctx) || queued) return
+        queued = true
+        worker.execute {
+            try {
+                Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
+                while (true) {
+                    val next = waiting(ctx).firstOrNull() ?: break
+                    status.value = Status.WORKING
+                    val started = System.currentTimeMillis()
+                    val text = transcribe(ctx, next)
+                    transcriptOf(next).writeText(text)
+                    Log.d(TAG, "${next.name}: ${text.length} znaków w ${System.currentTimeMillis() - started} ms")
+                    updatePending(ctx)
+                    RecorderState.recordingsChanged()
+                    if (text.isNotBlank()) runCatching { onTranscribed?.invoke(ctx, next, text) }
+                        .onFailure { Log.w(TAG, "skrót nie wyszedł", it) }
+                }
+                status.value = Status.READY
+            } catch (e: Throwable) {
+                Log.w(TAG, "błąd transkrypcji", e)
+                error.value = e.message ?: e.javaClass.simpleName
+                status.value = Status.ERROR
+            } finally {
+                queued = false
+            }
+        }
+    }
+
+    /** Nagrania bez tekstu, od najstarszego; pomijamy to, które właśnie się nagrywa. */
+    private fun waiting(context: Context): List<File> =
+        Recordings.list(context).map { it.file }.filter { !transcriptOf(it).exists() }.reversed()
+
+    private fun updatePending(context: Context) {
+        pending.value = runCatching { waiting(context).size }.getOrDefault(0)
+    }
+
+    private fun isCharging(context: Context) =
+        context.getSystemService(BatteryManager::class.java)?.isCharging == true
+
+    private fun engine(context: Context): OfflineRecognizer = recognizer ?: run {
+        val d = dir(context).path
+        OfflineRecognizer(
+            config = OfflineRecognizerConfig(
+                featConfig = FeatureConfig(sampleRate = Recordings.SAMPLE_RATE, featureDim = 80),
+                modelConfig = OfflineModelConfig(
+                    nemo = OfflineNemoEncDecCtcModelConfig(model = "$d/model.int8.onnx"),
+                    tokens = "$d/tokens.txt",
+                    numThreads = Runtime.getRuntime().availableProcessors().coerceIn(1, 4),
+                    debug = false,
+                    provider = "cpu",
+                ),
+            ),
+        ).also { recognizer = it }
+    }
+
+    private fun transcribe(context: Context, wav: File): String {
+        val samples = readWav(wav)
+        val rate = Recordings.SAMPLE_RATE
+        val rec = engine(context)
+        val parts = mutableListOf<String>()
+        var start = 0
+        while (start < samples.size) {
+            val end = cutPoint(samples, start, rate)
+            val stream = rec.createStream()
+            try {
+                stream.acceptWaveform(FloatArray(end - start) { samples[start + it] / 32768f }, rate)
+                rec.decode(stream)
+                rec.getResult(stream).text.trim().takeIf { it.isNotEmpty() }?.let { parts += it }
+            } finally {
+                stream.release()
+            }
+            start = end
+        }
+        return parts.joinToString(" ")
+    }
+
+    /** Koniec kawałka: najcichsze 100 ms między [CHUNK_MIN_S] a [CHUNK_MAX_S] – żeby nie ciąć w pół słowa. */
+    private fun cutPoint(samples: ShortArray, start: Int, rate: Int): Int {
+        if (samples.size - start <= CHUNK_MAX_S * rate) return samples.size
+        val window = rate / 10
+        var best = start + CHUNK_MAX_S * rate
+        var bestEnergy = Long.MAX_VALUE
+        var pos = start + CHUNK_MIN_S * rate
+        while (pos + window <= start + CHUNK_MAX_S * rate) {
+            var energy = 0L
+            for (i in pos until pos + window) energy += samples[i].toLong() * samples[i]
+            if (energy < bestEnergy) {
+                bestEnergy = energy
+                best = pos + window / 2
+            }
+            pos += window
+        }
+        return best
+    }
+
+    private fun readWav(file: File): ShortArray = RandomAccessFile(file, "r").use { raf ->
+        val bytes = ByteArray((raf.length() - WavWriter.HEADER_SIZE).coerceAtLeast(0).toInt())
+        raf.seek(WavWriter.HEADER_SIZE.toLong())
+        raf.readFully(bytes)
+        val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
+        ShortArray(buffer.remaining()).also { buffer.get(it) }
+    }
+}

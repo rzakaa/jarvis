@@ -1,13 +1,27 @@
 package pl.jarvis.recorder
 
 import android.content.Context
+import org.json.JSONObject
 import java.io.File
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
-data class Recording(val file: File, val start: LocalDateTime, val durationSeconds: Long)
+/** [topic]/[summary] – skrót od AI (plik .json), [transcript] – tekst (plik .txt), gdy już są. */
+data class Recording(
+    val file: File,
+    val start: LocalDateTime,
+    val durationSeconds: Long,
+    val topic: String? = null,
+    val summary: String? = null,
+    val transcript: String? = null,
+) {
+    /** Nagranie z plikami tekstu i skrótu. */
+    val relatedFiles get() = listOf(file, sibling(file, "txt"), sibling(file, "json"))
+}
+
+fun sibling(wav: File, extension: String) = File(wav.parentFile, wav.nameWithoutExtension + "." + extension)
 
 /**
  * Nagrania leżą w prywatnym katalogu aplikacji (inne aplikacje nie mają do niego dostępu):
@@ -40,7 +54,14 @@ object Recordings {
                         .getOrNull() ?: return@mapNotNull null
                     runCatching { WavWriter.repairIfNeeded(file, SAMPLE_RATE) }
                     val dataBytes = (file.length() - WavWriter.HEADER_SIZE).coerceAtLeast(0)
-                    Recording(file, day.atTime(time), dataBytes / (SAMPLE_RATE * 2))
+                    val notes = sibling(file, "json").takeIf { it.exists() }
+                        ?.let { runCatching { JSONObject(it.readText()) }.getOrNull() }
+                    Recording(
+                        file, day.atTime(time), dataBytes / (SAMPLE_RATE * 2),
+                        topic = notes?.optString("temat")?.takeIf { it.isNotBlank() },
+                        summary = notes?.optString("skrot")?.takeIf { it.isNotBlank() },
+                        transcript = sibling(file, "txt").takeIf { it.exists() }?.readText(),
+                    )
                 }
         }.sortedByDescending { it.start }
     }

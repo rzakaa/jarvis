@@ -66,7 +66,7 @@ fun SettingsScreen() {
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item { HudLabel("opcje · wersja 0.24", color = Hud.Cyan, size = 13.sp) }
+        item { HudLabel("opcje · wersja 0.25", color = Hud.Cyan, size = 13.sp) }
 
         item {
             HudPanel(modifier = Modifier.fillMaxWidth(), title = "sztuczna inteligencja") {

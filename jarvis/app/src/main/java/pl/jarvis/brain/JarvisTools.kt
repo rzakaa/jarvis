@@ -15,6 +15,9 @@ interface AiBrain {
      * [onSearching] – model zaczął szukać w internecie (to potrwa), można o tym powiedzieć.
      */
     fun handle(userText: String, onSearching: () -> Unit = {}): Result
+
+    /** Jednorazowe zadanie bez narzędzi i historii (np. skrót nagrania); odpowiedź w JSON. Blokuje. */
+    fun completeJson(system: String, user: String): String
 }
 
 /**
@@ -103,6 +106,12 @@ class JarvisTools(private val ledger: Ledger, private val clock: () -> LocalDate
                     val days = (input["dni"] as? Number)?.toInt() ?: 0
                     WebTools.weather(city, days) to false
                 }
+                "szukaj_w_nagraniach" -> {
+                    val search = recordingsSearch ?: return "Notatki z nagrań są niedostępne." to false
+                    val from = (input["od"] as? String)?.takeIf { it.isNotBlank() }?.let { LocalDate.parse(it) } ?: today.minusDays(7)
+                    val to = (input["do"] as? String)?.takeIf { it.isNotBlank() }?.let { LocalDate.parse(it) } ?: today
+                    search(from, to, (input["fraza"] as? String).orEmpty()) to false
+                }
                 "pobierz_strone" -> {
                     val url = (input["adres"] as? String)?.trim().orEmpty()
                     if (url.isEmpty()) return "Błąd: brak adresu." to false
@@ -134,6 +143,10 @@ class JarvisTools(private val ledger: Ledger, private val clock: () -> LocalDate
     }
 
     companion object {
+        /** Szukanie w notatkach z nagranych rozmów (od, do, fraza) – podpina je warstwa Androida. */
+        @Volatile
+        var recordingsSearch: ((LocalDate, LocalDate, String) -> String)? = null
+
         private val CONVERSATION_TIMEOUT: Duration = Duration.ofMinutes(15)
         private const val MAX_HISTORY = 40
         const val MAX_TOOL_ROUNDS = 6
@@ -167,6 +180,12 @@ class JarvisTools(private val ledger: Ledger, private val clock: () -> LocalDate
             konkretnej strony przeczytaj narzędziem pobierz_strone. Pogodę sprawdzaj narzędziem pogoda – gdy
             użytkownik nie poda miasta, weź je z pamięci, a jeśli go tam nie ma, zapytaj i zapamiętaj.
 
+            Nagrania: telefon nagrywa rozmowy w otoczeniu użytkownika, zamienia je na tekst i robi z nich skróty;
+            zadania z rozmów (np. prośby klientów) same trafiają na listę zadań. Gdy użytkownik pyta, o czym
+            ktoś rozmawiał, co mówił klient, co się działo danego dnia – użyj narzędzia szukaj_w_nagraniach
+            (z frazą albo bez, z właściwym zakresem dat) i odpowiedz krótkim skrótem. Na pytanie „co mam do
+            zrobienia” wymień otwarte zadania ze stanu Jarvisa, także te z rozmów.
+
             Prowadzisz też użytkownikowi rejestr zarobków, płatności (m.in. ZUS i alimenty) i zadań.
             - Zanim zapiszesz zarobek, powtórz kwotę i miejsce i zapytaj, czy się zgadza. Zapisz dopiero po potwierdzeniu.
               Jeśli użytkownik od razu podał kwotę i potwierdził albo sam poprawia wpis – zapisz bez ponownego pytania.
@@ -176,7 +195,7 @@ class JarvisTools(private val ledger: Ledger, private val clock: () -> LocalDate
               znasz z wyników narzędzi i z pobierz_finanse) i ewentualnie zapisz poprawiony.
             - Pomagaj też w zwykłych sprawach: odpowiadaj na pytania, doradzaj, licz, planuj, tłumacz, rozmawiaj.
 
-            Technicznie jeszcze nie masz dostępu do: dzwonienia, SMS-ów, maili, kalendarza, muzyki i nagranych rozmów
+            Technicznie jeszcze nie masz dostępu do: dzwonienia, SMS-ów, maili, kalendarza i muzyki
             (są w przygotowaniu). Jeśli ktoś o to poprosi, powiedz to krótko i zaproponuj, co możesz zrobić zamiast tego.
         """.trimIndent()
 
@@ -243,6 +262,16 @@ class JarvisTools(private val ledger: Ledger, private val clock: () -> LocalDate
                     "dni" to mapOf("type" to "integer", "description" to "Ile kolejnych dni prognozy (0–6); 0 = tylko dziś."),
                 ),
                 listOf("miasto"),
+            ),
+            Spec(
+                "szukaj_w_nagraniach",
+                "Przeszukuje notatki z nagranych rozmów (skróty i tekst). Bez frazy – wszystkie nagrania z zakresu dat.",
+                mapOf(
+                    "od" to mapOf("type" to "string", "description" to "Od dnia, RRRR-MM-DD; domyślnie tydzień temu."),
+                    "do" to mapOf("type" to "string", "description" to "Do dnia, RRRR-MM-DD; domyślnie dziś."),
+                    "fraza" to mapOf("type" to "string", "description" to "Słowa kluczowe, np. „fryzjer”, „Kowalski”, „wycena”."),
+                ),
+                emptyList(),
             ),
             Spec(
                 "pobierz_strone",

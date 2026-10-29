@@ -80,6 +80,14 @@ class OpenAiCompatibleBrain(
         }
     }
 
+    override fun completeJson(system: String, user: String): String {
+        val body = MAPPER.createObjectNode().put("model", model).put("max_tokens", 2048)
+        body.putArray("messages").add(message("system", system)).add(message("user", user))
+        body.set<ObjectNode>("response_format", MAPPER.createObjectNode().put("type", "json_object"))
+        if (base.contains("moonshot")) body.set<ObjectNode>("thinking", MAPPER.createObjectNode().put("type", "disabled"))
+        return post("/chat/completions", body).path("choices").path(0).path("message").path("content").asText("")
+    }
+
     private fun requestBody(): ObjectNode {
         val body = MAPPER.createObjectNode().put("model", model).put("max_tokens", 2048)
         val messages = body.putArray("messages")
