@@ -2,6 +2,8 @@ package pl.jarvis.assistant
 
 import android.content.Context
 import android.content.Intent
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -13,22 +15,29 @@ import android.speech.tts.UtteranceProgressListener
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import pl.jarvis.brain.Brain
+import pl.jarvis.brain.ClaudeBrain
 import pl.jarvis.brain.Ledger
 import pl.jarvis.brain.LedgerStore
+import pl.jarvis.recorder.Prefs
 import pl.jarvis.recorder.RecorderState
 import java.util.Locale
+import java.util.concurrent.Executors
 
 enum class AssistantState { IDLE, LISTENING, THINKING, SPEAKING }
 
 data class ChatMessage(val fromUser: Boolean, val text: String)
 
 /**
- * Rozmowa z Jarvisem: słuchanie (rozpoznawanie mowy po polsku), myślenie ([Brain])
- * i mówienie (synteza mowy). Na czas rozmowy rejestrator oddaje mikrofon.
+ * Rozmowa z Jarvisem: słuchanie (rozpoznawanie mowy po polsku), myślenie (Claude, a bez
+ * internetu lub klucza – lokalne komendy [Brain]) i mówienie (synteza mowy).
+ *
+ * Rozmowę zaczyna słowo „Jarvis” albo dotknięcie reaktora. Po każdej odpowiedzi Jarvis
+ * słucha dalej; gdy nikt nic nie mówi, rozmowa się kończy i wraca nasłuchiwanie słowa „Jarvis”.
+ * Na czas rozmowy rejestrator oddaje mikrofon.
  */
 object Assistant {
     val state = MutableStateFlow(AssistantState.IDLE)
-    val messages = MutableStateFlow(listOf(ChatMessage(false, "Systemy gotowe. Dotknij reaktora i powiedz, w czym pomóc.")))
+    val messages = MutableStateFlow(listOf<ChatMessage>())
 
     /** To, co Jarvis słyszy w trakcie mówienia (wynik częściowy). */
     val partial = MutableStateFlow("")
@@ -39,24 +48,42 @@ object Assistant {
     /** Zwiększany po każdej zmianie danych (zarobki, płatności, notatki). */
     val ledgerVersion = MutableStateFlow(0)
 
+    /** Czy działa AI (Claude). */
+    val aiEnabled = MutableStateFlow(false)
+
     lateinit var ledger: Ledger
         private set
 
-    private lateinit var brain: Brain
+    private lateinit var localBrain: Brain
+    private var claude: ClaudeBrain? = null
     private var appContext: Context? = null
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     private var recognizer: SpeechRecognizer? = null
-    private var listenAfterSpeaking = false
-    private var utteranceCounter = 0
     private val handler = Handler(Looper.getMainLooper())
+    private val worker = Executors.newSingleThreadExecutor()
+    private var utteranceCounter = 0
+
+    /** Trwa rozmowa – po odpowiedzi słuchamy dalej. */
+    private var conversation = false
+
+    /** Bieżące słuchanie jest dopytaniem po odpowiedzi – cisza kończy rozmowę bez komunikatu. */
+    private var followUp = false
 
     fun init(context: Context) {
         if (appContext != null) return
         val ctx = context.applicationContext
         appContext = ctx
         ledger = LedgerStore.load(ctx)
-        brain = Brain(ledger)
+        localBrain = Brain(ledger)
+        reloadSettings()
+        addMessage(
+            ChatMessage(
+                false,
+                if (claude != null) "Systemy gotowe. Powiedz „Jarvis” albo dotknij reaktora."
+                else "Systemy gotowe. Żebym był naprawdę inteligentny, wpisz klucz Claude w zakładce Ustawienia.",
+            ),
+        )
         tts = TextToSpeech(ctx) init@{ status ->
             if (status != TextToSpeech.SUCCESS) return@init
             val engine = tts ?: return@init
@@ -77,43 +104,49 @@ object Assistant {
         }
     }
 
-    fun isRecognitionAvailable(): Boolean = appContext?.let { SpeechRecognizer.isRecognitionAvailable(it) } ?: false
+    /** Wczytuje klucz i model z ustawień (po ich zmianie). */
+    fun reloadSettings() {
+        val ctx = appContext ?: return
+        val key = Prefs.claudeKey(ctx)
+        val model = if (Prefs.smartModel(ctx)) ClaudeBrain.MODEL_SMART else ClaudeBrain.MODEL_FAST
+        claude = if (key.isBlank()) null else ClaudeBrain(key, ledger, model)
+        aiEnabled.value = claude != null
+    }
+
+    /** Wywoływane przez rejestrator, gdy usłyszy słowo „Jarvis”. */
+    fun onWakeWord() {
+        if (state.value != AssistantState.IDLE) return
+        beep()
+        conversation = true
+        startListening(isFollowUp = false)
+    }
+
+    /** Dotknięcie reaktora: start rozmowy albo jej zakończenie. */
+    fun toggleListening() {
+        when (state.value) {
+            AssistantState.LISTENING -> {
+                conversation = false
+                recognizer?.stopListening()
+            }
+            AssistantState.SPEAKING -> {
+                tts?.stop()
+                conversation = false
+                setState(AssistantState.IDLE)
+            }
+            else -> {
+                conversation = true
+                startListening(isFollowUp = false)
+            }
+        }
+    }
 
     /** Polecenie napisane zamiast powiedzianego. */
     fun submitText(text: String) {
         if (text.isBlank()) return
-        stopEverything()
-        handleText(text.trim())
-    }
-
-    fun toggleListening() {
-        if (state.value == AssistantState.LISTENING) {
-            recognizer?.stopListening()
-        } else {
-            startListening()
-        }
-    }
-
-    fun startListening() {
-        val ctx = appContext ?: return
-        if (!SpeechRecognizer.isRecognitionAvailable(ctx)) {
-            say("Rozpoznawanie mowy jest niedostępne na tym urządzeniu. Napisz polecenie w polu poniżej.")
-            return
-        }
+        conversation = false
+        recognizer?.cancel()
         tts?.stop()
-        val r = recognizer ?: SpeechRecognizer.createSpeechRecognizer(ctx).also {
-            it.setRecognitionListener(listener)
-            recognizer = it
-        }
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-            .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "pl-PL")
-            .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            .putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-        partial.value = ""
-        setState(AssistantState.LISTENING)
-        // Chwila dla rejestratora na oddanie mikrofonu.
-        handler.postDelayed({ if (state.value == AssistantState.LISTENING) r.startListening(intent) }, 200)
+        handleText(text.trim())
     }
 
     fun removeEntry(id: Long) {
@@ -125,13 +158,59 @@ object Assistant {
         dataChanged()
     }
 
+    private fun startListening(isFollowUp: Boolean) {
+        val ctx = appContext ?: return
+        if (!SpeechRecognizer.isRecognitionAvailable(ctx)) {
+            conversation = false
+            say("Rozpoznawanie mowy jest niedostępne na tym urządzeniu. Napisz polecenie w polu poniżej.")
+            return
+        }
+        tts?.stop()
+        followUp = isFollowUp
+        val r = recognizer ?: SpeechRecognizer.createSpeechRecognizer(ctx).also {
+            it.setRecognitionListener(listener)
+            recognizer = it
+        }
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+            .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "pl-PL")
+            .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            .putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+        partial.value = ""
+        setState(AssistantState.LISTENING)
+        // Chwila dla rejestratora na oddanie mikrofonu (i na wybrzmienie sygnału).
+        handler.postDelayed({ if (state.value == AssistantState.LISTENING) r.startListening(intent) }, 300)
+    }
+
     private fun handleText(text: String) {
         addMessage(ChatMessage(true, text))
+        if (END_PHRASES.containsMatchIn(text.lowercase())) conversation = false
         setState(AssistantState.THINKING)
-        val reply = brain.handle(text)
-        if (reply.changed) dataChanged()
-        listenAfterSpeaking = reply.expectsAnswer
-        say(reply.text)
+        val ai = claude
+        if (ai == null) {
+            val reply = localBrain.handle(text)
+            onReply(reply.text, reply.changed, reply.expectsAnswer)
+            return
+        }
+        worker.execute {
+            try {
+                val result = ai.handle(text)
+                handler.post { onReply(result.text, result.changed, false) }
+            } catch (e: Exception) {
+                // Bez internetu albo błąd API – radzimy sobie lokalnymi komendami.
+                handler.post {
+                    val reply = localBrain.handle(text)
+                    addMessage(ChatMessage(false, "(Brak połączenia z AI: ${e.message?.take(80)})"))
+                    onReply(reply.text, reply.changed, reply.expectsAnswer)
+                }
+            }
+        }
+    }
+
+    private fun onReply(text: String, changed: Boolean, expectsAnswer: Boolean) {
+        if (changed) dataChanged()
+        if (expectsAnswer) conversation = true
+        say(text)
     }
 
     private fun say(text: String) {
@@ -147,20 +226,22 @@ object Assistant {
 
     private fun afterSpeaking() {
         if (state.value == AssistantState.LISTENING || state.value == AssistantState.IDLE) return
-        if (listenAfterSpeaking) {
-            // Jarvis zadał pytanie („Zgadza się?”) – od razu słuchamy odpowiedzi.
-            listenAfterSpeaking = false
-            startListening()
-        } else {
-            setState(AssistantState.IDLE)
-        }
+        if (conversation) startListening(isFollowUp = true) else setState(AssistantState.IDLE)
     }
 
-    private fun stopEverything() {
-        listenAfterSpeaking = false
-        recognizer?.cancel()
-        tts?.stop()
+    private fun endConversation() {
+        conversation = false
+        followUp = false
+        partial.value = ""
         setState(AssistantState.IDLE)
+    }
+
+    private fun beep() {
+        runCatching {
+            val tone = ToneGenerator(AudioManager.STREAM_MUSIC, 60)
+            tone.startTone(ToneGenerator.TONE_PROP_ACK, 150)
+            handler.postDelayed({ tone.release() }, 400)
+        }
     }
 
     private fun dataChanged() {
@@ -201,8 +282,9 @@ object Assistant {
             val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
             partial.value = ""
             if (text.isBlank()) {
-                setState(AssistantState.IDLE)
-                addMessage(ChatMessage(false, "Nic nie usłyszałem. Dotknij reaktora i spróbuj jeszcze raz."))
+                val wasFollowUp = followUp
+                endConversation()
+                if (!wasFollowUp) addMessage(ChatMessage(false, "Nic nie usłyszałem."))
             } else {
                 handleText(text)
             }
@@ -211,11 +293,12 @@ object Assistant {
         override fun onError(error: Int) {
             // Spóźniony błąd po przerwaniu słuchania – nie psujemy bieżącego stanu.
             if (state.value != AssistantState.LISTENING) return
-            partial.value = ""
-            setState(AssistantState.IDLE)
+            val wasFollowUp = followUp
+            endConversation()
             val message = when (error) {
                 SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT ->
-                    "Nic nie usłyszałem. Dotknij reaktora i spróbuj jeszcze raz."
+                    // Cisza po odpowiedzi to normalny koniec rozmowy.
+                    if (wasFollowUp) return else "Nic nie usłyszałem. Powiedz „Jarvis” albo dotknij reaktora."
                 SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT, SpeechRecognizer.ERROR_SERVER ->
                     "Usługa rozpoznawania mowy nie odpowiada. Sprawdź internet albo napisz polecenie."
                 SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Potrzebuję dostępu do mikrofonu."
@@ -226,4 +309,7 @@ object Assistant {
             addMessage(ChatMessage(false, message))
         }
     }
+
+    /** Zwroty kończące rozmowę – po odpowiedzi Jarvis przestaje słuchać. */
+    private val END_PHRASES = Regex("^(dzięki|dziękuję|dzieki|dziekuje|to wszystko|koniec|stop|nic|nieważne|niewazne|na razie)\\b")
 }

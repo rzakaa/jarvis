@@ -37,6 +37,9 @@ object RecorderState {
     /** Mikrofon chwilowo potrzebny komuś innemu (rozmowa z Jarvisem) – rejestrator czeka. */
     val micPaused = MutableStateFlow(false)
 
+    /** Czy słowo „Jarvis” jest teraz wykrywane (null = wyłączone, tekst = błąd). */
+    val wakeWordStatus = MutableStateFlow<String?>(null)
+
     /** Z czym faktycznie otworzył się mikrofon, np. „48000 Hz · Mikrofon”. */
     val micInfo = MutableStateFlow<String?>(null)
     val error = MutableStateFlow<String?>(null)
@@ -57,6 +60,10 @@ object Prefs {
     private const val WANTS_RECORDING = "wants_recording"
     private const val SENSITIVITY = "sensitivity"
     private const val MIC_SOURCE = "mic_source"
+    private const val CLAUDE_KEY = "claude_key"
+    private const val PICOVOICE_KEY = "picovoice_key"
+    private const val WAKE_WORD = "wake_word"
+    private const val SMART_MODEL = "smart_model"
 
     private fun prefs(context: Context) =
         context.getSharedPreferences("jarvis", Context.MODE_PRIVATE)
@@ -82,4 +89,23 @@ object Prefs {
 
     fun setMicSource(context: Context, value: MicSource) =
         prefs(context).edit().putString(MIC_SOURCE, value.name).apply()
+
+    /** Klucz API Claude (platform.claude.com). Trzymany w prywatnych danych aplikacji. */
+    fun claudeKey(context: Context) = prefs(context).getString(CLAUDE_KEY, "").orEmpty()
+
+    /** Klucz Picovoice (console.picovoice.ai) do słowa „Jarvis”. */
+    fun picovoiceKey(context: Context) = prefs(context).getString(PICOVOICE_KEY, "").orEmpty()
+
+    fun wakeWordEnabled(context: Context) = prefs(context).getBoolean(WAKE_WORD, true)
+
+    /** true = mądrzejszy model (Sonnet), false = szybszy i tańszy (Haiku). */
+    fun smartModel(context: Context) = prefs(context).getBoolean(SMART_MODEL, true)
+
+    fun saveAssistantSettings(context: Context, claudeKey: String, picovoiceKey: String, wakeWord: Boolean, smart: Boolean) =
+        prefs(context).edit()
+            .putString(CLAUDE_KEY, claudeKey.trim())
+            .putString(PICOVOICE_KEY, picovoiceKey.trim())
+            .putBoolean(WAKE_WORD, wakeWord)
+            .putBoolean(SMART_MODEL, smart)
+            .apply()
 }

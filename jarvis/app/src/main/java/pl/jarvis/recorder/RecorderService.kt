@@ -21,6 +21,7 @@ import android.os.PowerManager
 import android.os.Process
 import kotlinx.coroutines.flow.update
 import pl.jarvis.MainActivity
+import pl.jarvis.assistant.Assistant
 import pl.jarvis.R
 import java.io.File
 import java.time.LocalDateTime
@@ -124,6 +125,7 @@ class RecorderService : Service() {
         val token = Any()
         currentLoop = token
         val vad = VoiceActivityDetector()
+        val wakeWord = createWakeWord()
         var frameCounter = 0
         val segmenter = Segmenter(object : Segmenter.Sink {
             private var writer: WavWriter? = null
@@ -182,14 +184,33 @@ class RecorderService : Service() {
 
                 val db = levelDb(frame, frame.size)
                 if (++frameCounter % 3 == 0) RecorderState.levelDb.value = db
+                if (wakeWord?.process(frame) == true) mainHandler.post { Assistant.onWakeWord() }
                 segmenter.process(frame, vad.isSpeech(db, RecorderState.sensitivity.value))
             }
         } finally {
+            wakeWord?.close()
+            RecorderState.wakeWordStatus.value = null
             segmenter.close()
             record.stop()
             record.release()
             // Jeśli w międzyczasie ruszyło nowe nasłuchiwanie, nie nadpisujemy jego stanu.
             if (currentLoop === token) RecorderState.status.value = RecorderStatus.STOPPED
+        }
+    }
+
+    /** Słowo „Jarvis” – jeśli włączone w ustawieniach i jest klucz Picovoice. */
+    private fun createWakeWord(): WakeWord? {
+        if (!Prefs.wakeWordEnabled(this)) return null
+        val key = Prefs.picovoiceKey(this)
+        if (key.isBlank()) {
+            RecorderState.wakeWordStatus.value = "brak klucza Picovoice"
+            return null
+        }
+        return try {
+            WakeWord(this, key).also { RecorderState.wakeWordStatus.value = "aktywne" }
+        } catch (e: Exception) {
+            RecorderState.wakeWordStatus.value = "błąd: ${e.message}"
+            null
         }
     }
 
@@ -296,6 +317,12 @@ class RecorderService : Service() {
             context.startForegroundService(
                 Intent(context, RecorderService::class.java).setAction(ACTION_START),
             )
+        }
+
+        /** Ponowne uruchomienie, np. po zmianie ustawień słowa-klucza. */
+        fun restart(context: Context) {
+            stop(context)
+            Handler(Looper.getMainLooper()).postDelayed({ start(context) }, 800)
         }
 
         fun stop(context: Context) {

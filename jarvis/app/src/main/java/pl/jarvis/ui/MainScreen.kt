@@ -16,7 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.sp
 
-private val TABS = listOf("◉" to "Jarvis", "≋" to "Nagrania", "zł" to "Finanse")
+private val TABS = listOf("◉" to "Jarvis", "≋" to "Nagrania", "zł" to "Finanse", "⚙" to "Opcje")
 
 @Composable
 fun MainScreen() {
@@ -48,7 +48,8 @@ fun MainScreen() {
                 when (tab) {
                     0 -> JarvisScreen()
                     1 -> RecordingsScreen()
-                    else -> FinanceScreen()
+                    2 -> FinanceScreen()
+                    else -> SettingsScreen()
                 }
             }
         }

@@ -50,11 +50,24 @@ Nagrania krótsze niż 1 s mowy (stuknięcia, trzaśnięcia drzwiami) są automa
 Pliki leżą w `/data/data/pl.jarvis/files/recordings/RRRR-MM-DD/GG-MM-SS.wav`
 (podgląd: Android Studio → View → Tool Windows → Device Explorer).
 
+## Jarvis z AI i słowem „Jarvis” (od wersji 0.6)
+
+W zakładce **⚙ Opcje** wpisz:
+
+- **Klucz API Claude** – platform.claude.com → doładuj konto (np. 5 $) → API Keys → Create Key.
+  Bez klucza Jarvis rozumie tylko proste komendy lokalne.
+- **AccessKey Picovoice** – console.picovoice.ai → darmowe konto → AccessKey. Potrzebny do wykrywania słowa „Jarvis”.
+
+Słowo „Jarvis” działa, gdy w zakładce **Nagrania** jest włączone nasłuchiwanie. Po odpowiedzi Jarvis słucha dalej;
+cisza albo „dzięki” kończy rozmowę.
+
 ## Plan
 
 - [x] Etap 1a: nasłuchiwanie w tle, wykrywanie mowy, zapis nagrań, lista i odtwarzanie
 - [ ] Etap 1b: transkrypcja na telefonie (Whisper), nocne podsumowania i lista zadań
-- [ ] Etap 2: komendy głosowe – zarobki, płatności (ZUS, alimenty), przypomnienia, raporty
-- [ ] Etap 3: rozmowa z Jarvisem (słowo „Jarvis”, głos Piper `pl_PL-bass-high`, Claude przez API)
+- [x] Etap 2: zarobki, płatności (ZUS, alimenty), raporty, zadania
+- [ ] Przypomnienia o terminach (ZUS, alimenty)
+- [x] Etap 3: rozmowa z Jarvisem – Claude przez API, słowo „Jarvis”, tryb rozmowy
+- [ ] Głos Piper `pl_PL-bass-high`
 - [ ] Etap 4: połączenia, SMS, Gmail, kalendarz
 - [ ] Etap 5: muzyka i głośniki, inicjatywa (poranny raport), słuchawki, dom

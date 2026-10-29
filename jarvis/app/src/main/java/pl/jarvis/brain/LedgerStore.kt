@@ -40,7 +40,7 @@ object LedgerStore {
         return ledger
     }
 
-    fun save(context: Context, ledger: Ledger) {
+    fun save(context: Context, ledger: Ledger) = synchronized(ledger) {
         val root = JSONObject()
             .put("nextId", ledger.nextId)
             .put("incomes", JSONArray(ledger.incomes.map {

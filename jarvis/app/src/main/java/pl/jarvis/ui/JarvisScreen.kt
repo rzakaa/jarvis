@@ -55,6 +55,8 @@ fun JarvisScreen() {
     val voiceLevel by Assistant.voiceLevel.collectAsState()
     val ambientDb by RecorderState.levelDb.collectAsState()
     val recorderStatus by RecorderState.status.collectAsState()
+    val aiEnabled by Assistant.aiEnabled.collectAsState()
+    val wakeStatus by RecorderState.wakeWordStatus.collectAsState()
     var input by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
 
@@ -108,7 +110,7 @@ fun JarvisScreen() {
                 letterSpacing = 4.sp,
             )
             HudLabel(
-                when (recorderStatus) {
+                (if (aiEnabled) "ai · " else "lokalnie · ") + when (recorderStatus) {
                     RecorderStatus.STOPPED -> "rejestr: off"
                     RecorderStatus.LISTENING -> "rejestr: nasłuch"
                     RecorderStatus.RECORDING -> "rejestr: zapis"
@@ -133,7 +135,7 @@ fun JarvisScreen() {
 
         HudLabel(
             when (state) {
-                AssistantState.IDLE -> "dotknij, aby mówić"
+                AssistantState.IDLE -> if (wakeStatus == "aktywne") "powiedz „jarvis” albo dotknij" else "dotknij, aby mówić"
                 AssistantState.LISTENING -> partial.ifEmpty { "słucham…" }
                 AssistantState.THINKING -> "przetwarzam…"
                 AssistantState.SPEAKING -> "mówię…"
