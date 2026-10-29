@@ -57,10 +57,11 @@ W zakładce **⚙ Opcje** wpisz:
 - **Klucz API Claude** – platform.claude.com → doładuj konto (np. 5 $) → API Keys → Create Key.
   Bez klucza Jarvis rozumie tylko proste komendy lokalne.
 - albo **Kimi** (od wersji 0.7): wybierz „Kimi”, wpisz klucz z platform.moonshot.ai, kliknij „Pobierz modele” i wybierz model.
-- **AccessKey Picovoice** – console.picovoice.ai → darmowe konto → AccessKey. Potrzebny do wykrywania słowa „Jarvis”.
+Słowo **„Hey Jarvis”** (od wersji 0.9) wykrywa openWakeWord – bez konta, bez klucza i bez internetu.
+Działa, gdy jest włączone nasłuchiwanie (startuje samo po otwarciu aplikacji). Czułość ustawisz w Opcjach.
+Po odpowiedzi Jarvis słucha dalej; cisza albo „dzięki” kończy rozmowę.
 
-Słowo „Jarvis” działa, gdy w zakładce **Nagrania** jest włączone nasłuchiwanie. Po odpowiedzi Jarvis słucha dalej;
-cisza albo „dzięki” kończy rozmowę.
+Modele „Hey Jarvis” pochodzą z projektu openWakeWord (licencja CC BY-NC-SA 4.0 – tylko do użytku niekomercyjnego).
 
 ## Plan
 
@@ -68,7 +69,7 @@ cisza albo „dzięki” kończy rozmowę.
 - [ ] Etap 1b: transkrypcja na telefonie (Whisper), nocne podsumowania i lista zadań
 - [x] Etap 2: zarobki, płatności (ZUS, alimenty), raporty, zadania
 - [ ] Przypomnienia o terminach (ZUS, alimenty)
-- [x] Etap 3: rozmowa z Jarvisem – Claude przez API, słowo „Jarvis”, tryb rozmowy
+- [x] Etap 3: rozmowa z Jarvisem – Claude lub Kimi, słowo „Hey Jarvis”, tryb rozmowy
 - [ ] Głos Piper `pl_PL-bass-high`
 - [ ] Etap 4: połączenia, SMS, Gmail, kalendarz
 - [ ] Etap 5: muzyka i głośniki, inicjatywa (poranny raport), słuchawki, dom

@@ -85,7 +85,7 @@ object Assistant {
         addMessage(
             ChatMessage(
                 false,
-                if (ai != null) "Systemy gotowe. Powiedz „Jarvis” albo dotknij reaktora."
+                if (ai != null) "Systemy gotowe. Powiedz „Hey Jarvis” albo dotknij reaktora."
                 else "Systemy gotowe. Żebym był naprawdę inteligentny, wpisz klucz AI (Claude albo Kimi) w zakładce Opcje.",
             ),
         )
@@ -320,7 +320,7 @@ object Assistant {
             val message = when (error) {
                 SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT ->
                     // Cisza po odpowiedzi to normalny koniec rozmowy.
-                    if (wasFollowUp) return else "Nic nie usłyszałem. Powiedz „Jarvis” albo dotknij reaktora."
+                    if (wasFollowUp) return else "Nic nie usłyszałem. Powiedz „Hey Jarvis” albo dotknij reaktora."
                 SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT, SpeechRecognizer.ERROR_SERVER ->
                     "Usługa rozpoznawania mowy nie odpowiada. Sprawdź internet albo napisz polecenie."
                 SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Potrzebuję dostępu do mikrofonu."

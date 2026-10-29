@@ -1,0 +1,3 @@
+Modele z projektu openWakeWord (https://github.com/dscripka/openWakeWord), wersja v0.5.1.
+Licencja modeli: Creative Commons Attribution-NonCommercial-ShareAlike 4.0
+(https://creativecommons.org/licenses/by-nc-sa/4.0/) – tylko do użytku niekomercyjnego.

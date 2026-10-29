@@ -198,16 +198,11 @@ class RecorderService : Service() {
         }
     }
 
-    /** Słowo „Jarvis” – jeśli włączone w ustawieniach i jest klucz Picovoice. */
+    /** Słowo „Hey Jarvis” – jeśli włączone w ustawieniach. */
     private fun createWakeWord(): WakeWord? {
         if (!Prefs.wakeWordEnabled(this)) return null
-        val key = Prefs.picovoiceKey(this)
-        if (key.isBlank()) {
-            RecorderState.wakeWordStatus.value = "brak klucza Picovoice"
-            return null
-        }
         return try {
-            WakeWord(this, key).also { RecorderState.wakeWordStatus.value = "aktywne" }
+            WakeWord(this, Prefs.wakeSensitivity(this).threshold).also { RecorderState.wakeWordStatus.value = "aktywne" }
         } catch (e: Exception) {
             RecorderState.wakeWordStatus.value = "błąd: ${e.message}"
             null

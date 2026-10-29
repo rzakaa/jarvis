@@ -61,7 +61,7 @@ object Prefs {
     private const val SENSITIVITY = "sensitivity"
     private const val MIC_SOURCE = "mic_source"
     private const val CLAUDE_KEY = "claude_key"
-    private const val PICOVOICE_KEY = "picovoice_key"
+    private const val WAKE_SENSITIVITY = "wake_sensitivity"
     private const val WAKE_WORD = "wake_word"
     private const val SMART_MODEL = "smart_model"
     private const val PROVIDER = "ai_provider"
@@ -97,8 +97,11 @@ object Prefs {
     /** Klucz API Claude (platform.claude.com). Trzymany w prywatnych danych aplikacji. */
     fun claudeKey(context: Context) = prefs(context).getString(CLAUDE_KEY, "").orEmpty()
 
-    /** Klucz Picovoice (console.picovoice.ai) do słowa „Jarvis”. */
-    fun picovoiceKey(context: Context) = prefs(context).getString(PICOVOICE_KEY, "").orEmpty()
+    /** Jak łatwo Jarvis reaguje na „Hey Jarvis”. */
+    fun wakeSensitivity(context: Context): WakeSensitivity {
+        val name = prefs(context).getString(WAKE_SENSITIVITY, null) ?: return WakeSensitivity.MEDIUM
+        return WakeSensitivity.entries.firstOrNull { it.name == name } ?: WakeSensitivity.MEDIUM
+    }
 
     fun wakeWordEnabled(context: Context) = prefs(context).getBoolean(WAKE_WORD, true)
 
@@ -126,7 +129,7 @@ object Prefs {
             .putString(KIMI_KEY, settings.kimiKey.trim())
             .putString(KIMI_BASE_URL, settings.kimiBaseUrl.trim())
             .putString(KIMI_MODEL, settings.kimiModel.trim())
-            .putString(PICOVOICE_KEY, settings.picovoiceKey.trim())
+            .putString(WAKE_SENSITIVITY, settings.wakeSensitivity.name)
             .putBoolean(WAKE_WORD, settings.wakeWord)
             .apply()
 
@@ -137,7 +140,7 @@ object Prefs {
         kimiKey = kimiKey(context),
         kimiBaseUrl = kimiBaseUrl(context),
         kimiModel = kimiModel(context),
-        picovoiceKey = picovoiceKey(context),
+        wakeSensitivity = wakeSensitivity(context),
         wakeWord = wakeWordEnabled(context),
     )
 
@@ -146,6 +149,13 @@ object Prefs {
 
 enum class AiProvider { CLAUDE, KIMI }
 
+/** Próg wyniku detektora „Hey Jarvis” (0..1): niższy = łatwiej reaguje, ale częściej się myli. */
+enum class WakeSensitivity(val label: String, val threshold: Float) {
+    LOW("Niska", 0.65f),
+    MEDIUM("Średnia", 0.5f),
+    HIGH("Wysoka", 0.3f),
+}
+
 data class AssistantSettings(
     val provider: AiProvider,
     val claudeKey: String,
@@ -153,6 +163,6 @@ data class AssistantSettings(
     val kimiKey: String,
     val kimiBaseUrl: String,
     val kimiModel: String,
-    val picovoiceKey: String,
+    val wakeSensitivity: WakeSensitivity,
     val wakeWord: Boolean,
 )

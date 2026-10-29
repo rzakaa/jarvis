@@ -37,6 +37,7 @@ import pl.jarvis.recorder.Prefs
 import pl.jarvis.recorder.RecorderService
 import pl.jarvis.recorder.RecorderState
 import pl.jarvis.recorder.RecorderStatus
+import pl.jarvis.recorder.WakeSensitivity
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -61,7 +62,7 @@ fun SettingsScreen() {
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item { HudLabel("opcje · wersja 0.8", color = Hud.Cyan, size = 13.sp) }
+        item { HudLabel("opcje · wersja 0.9", color = Hud.Cyan, size = 13.sp) }
 
         item {
             HudPanel(modifier = Modifier.fillMaxWidth(), title = "sztuczna inteligencja") {
@@ -123,7 +124,7 @@ fun SettingsScreen() {
         }
 
         item {
-            HudPanel(modifier = Modifier.fillMaxWidth(), title = "słowo „jarvis”") {
+            HudPanel(modifier = Modifier.fillMaxWidth(), title = "słowo „hey jarvis”") {
                 HudLabel(
                     when {
                         !settings.wakeWord -> "status: wyłączone"
@@ -136,10 +137,15 @@ fun SettingsScreen() {
                     HudChip("Włączone", settings.wakeWord, onClick = { update { it.copy(wakeWord = true) } })
                     HudChip("Wyłączone", !settings.wakeWord, onClick = { update { it.copy(wakeWord = false) } })
                 }
-                KeyField("AccessKey Picovoice", settings.picovoiceKey) { v -> update { it.copy(picovoiceKey = v) } }
+                HudLabel("czułość", modifier = Modifier.padding(top = 6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 6.dp)) {
+                    WakeSensitivity.entries.forEach { option ->
+                        HudChip(option.label, settings.wakeSensitivity == option, onClick = { update { it.copy(wakeSensitivity = option) } })
+                    }
+                }
                 Hint(
-                    "Klucz za darmo: console.picovoice.ai → załóż konto → skopiuj AccessKey. " +
-                        "Słowo „Jarvis” działa, gdy w zakładce Nagrania jest włączone nasłuchiwanie.",
+                    "Powiedz „Hey Jarvis” (po angielsku albo „Hej Dżarwis”). Działa w telefonie, bez konta i internetu. " +
+                        "Gdy nie reaguje – zwiększ czułość; gdy budzi się sam – zmniejsz.",
                 )
             }
         }

@@ -125,9 +125,8 @@ fun JarvisScreen() {
         HudLabel(
             when {
                 !wakeEnabled -> "słowo „jarvis”: wyłączone w opcjach"
-                wakeStatus == "aktywne" -> "nasłuch „jarvis”: aktywny"
+                wakeStatus == "aktywne" -> "powiedz „hey jarvis” – nasłuch aktywny"
                 recorderStatus == RecorderStatus.STOPPED -> "nasłuch wyłączony – włącz w zakładce nagrania"
-                wakeStatus == "brak klucza Picovoice" -> "słowo „jarvis”: wpisz klucz picovoice w opcjach"
                 wakeStatus != null -> "słowo „jarvis”: $wakeStatus"
                 else -> "uruchamiam nasłuch…"
             },
@@ -152,7 +151,7 @@ fun JarvisScreen() {
 
         HudLabel(
             when (state) {
-                AssistantState.IDLE -> if (wakeStatus == "aktywne") "powiedz „jarvis” albo dotknij" else "dotknij, aby mówić"
+                AssistantState.IDLE -> if (wakeStatus == "aktywne") "powiedz „hey jarvis” albo dotknij" else "dotknij, aby mówić"
                 AssistantState.LISTENING -> partial.ifEmpty { "słucham…" }
                 AssistantState.THINKING -> "przetwarzam…"
                 AssistantState.SPEAKING -> "mówię…"

@@ -14,8 +14,8 @@ android {
         applicationId = "pl.jarvis"
         minSdk = 29
         targetSdk = 36
-        versionCode = 8
-        versionName = "0.8"
+        versionCode = 9
+        versionName = "0.9"
     }
 
     buildTypes {
@@ -64,7 +64,8 @@ dependencies {
     implementation("com.anthropic:anthropic-java:3.3.0")
     // Ta sama wersja co kompilator Kotlina (biblioteka Claude ciągnie starszą przez Jacksona).
     implementation("org.jetbrains.kotlin:kotlin-reflect:2.2.20")
-    implementation("ai.picovoice:porcupine-android:4.0.2")
+    // Wykrywanie „Hey Jarvis” (openWakeWord) – modele ONNX w assets/wakeword.
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.31.1")
     // Zapytania do API zgodnych z OpenAI (np. Kimi).
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }

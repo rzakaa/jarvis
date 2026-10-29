@@ -1,34 +1,34 @@
 package pl.jarvis.recorder
 
-import ai.picovoice.porcupine.Porcupine
 import android.content.Context
 import java.io.Closeable
 
 /**
- * Wykrywa słowo „Jarvis” (Porcupine, działa na telefonie). Dostaje ten sam dźwięk 16 kHz,
- * który nagrywa rejestrator, więc nie zajmuje mikrofonu osobno.
+ * Wykrywa słowo „Hey Jarvis” (openWakeWord, działa na telefonie, bez konta i internetu).
+ * Dostaje ten sam dźwięk 16 kHz, który nagrywa rejestrator, więc nie zajmuje mikrofonu osobno.
  */
-class WakeWord(context: Context, accessKey: String, sensitivity: Float = 0.6f) : Closeable {
-    private val porcupine = Porcupine.Builder()
-        .setAccessKey(accessKey)
-        .setKeyword(Porcupine.BuiltInKeyword.JARVIS)
-        .setSensitivity(sensitivity)
-        .build(context)
-    private val frame = ShortArray(porcupine.frameLength)
-    private var filled = 0
+class WakeWord(context: Context, private val threshold: Float) : Closeable {
+    private val detector = OpenWakeWord(
+        asset(context, "melspectrogram.onnx"),
+        asset(context, "embedding_model.onnx"),
+        asset(context, "hey_jarvis_v0.1.onnx"),
+    )
+    private var lastDetection = 0L
 
-    /** Zwraca true, jeśli w tych próbkach padło słowo „Jarvis”. */
+    /** Zwraca true, jeśli w tych próbkach padło „Hey Jarvis” (najwyżej raz na 2 s). */
     fun process(samples: ShortArray): Boolean {
-        var detected = false
-        for (sample in samples) {
-            frame[filled++] = sample
-            if (filled == frame.size) {
-                filled = 0
-                if (porcupine.process(frame) >= 0) detected = true
-            }
+        val score = detector.process(samples)
+        val now = System.currentTimeMillis()
+        if (score >= threshold && now - lastDetection > 2000) {
+            lastDetection = now
+            return true
         }
-        return detected
+        return false
     }
 
-    override fun close() = porcupine.delete()
+    override fun close() = detector.close()
+
+    private companion object {
+        fun asset(context: Context, name: String) = context.assets.open("wakeword/$name").use { it.readBytes() }
+    }
 }
