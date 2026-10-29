@@ -1,9 +1,15 @@
 # Jarvis: pobiera nową wersję, włącza emulator (jeśli nie działa), instaluje i otwiera aplikację.
 # Uruchomienie: powershell -ExecutionPolicy Bypass -File .\uruchom.ps1
 $ErrorActionPreference = "Stop"
-$sdk = "$env:LOCALAPPDATA\Android\Sdk"
+# SDK jak w local.properties (C:\Android\sdk) - stare SDK w %LOCALAPPDATA% ma zepsuty emulator 36.x
+$sdk = "C:\Android\sdk"
+$sdkLine = Get-Content "$PSScriptRoot\local.properties" -ErrorAction SilentlyContinue | Where-Object { $_ -match "^sdk\.dir=" }
+if ($sdkLine) { $sdk = ($sdkLine -replace "^sdk\.dir=", "") -replace "\\:", ":" -replace "\\\\", "\" }
 $adb = "$sdk\platform-tools\adb.exe"
 $emu = "$sdk\emulator\emulator.exe"
+# Gradle 8.14 nie dziala na Javie 25 (jbr z Android Studio) - bierzemy JDK 21
+$jdk21 = Get-ChildItem "$env:USERPROFILE\.jdks" -Directory -Filter "*21*" -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($jdk21) { $env:JAVA_HOME = $jdk21.FullName }
 Set-Location $PSScriptRoot
 
 Write-Host "== Pobieram nowa wersje ==" -ForegroundColor Cyan

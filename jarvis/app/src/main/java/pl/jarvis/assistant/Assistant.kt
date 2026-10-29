@@ -78,8 +78,15 @@ object Assistant {
     private var retries = 0
 
     private var listeningEndedAt = 0L
-    private const val CHIME_MS = 450L
-    private const val UNMUTE_DELAY_MS = 350L
+
+    /** Chwila dla rejestratora na oddanie mikrofonu przed startem rozpoznawania. */
+    private const val MIC_HANDOVER_MS = 250L
+
+    /** Systemowe piknięcie końca słuchania potrafi przyjść z opóźnieniem – dźwięk wraca dopiero po nim. */
+    private const val UNMUTE_DELAY_MS = 700L
+
+    /** Ile razy po cichu słuchamy ponownie po „Hey Jarvis”, zanim się poddamy. */
+    private const val MAX_RETRIES = 3
 
     fun init(context: Context) {
         if (appContext != null) return
@@ -137,9 +144,8 @@ object Assistant {
     /** Wywoływane przez rejestrator, gdy usłyszy słowo „Jarvis”. */
     fun onWakeWord() {
         if (state.value != AssistantState.IDLE) return
-        Sounds.playChime()
         conversation = true
-        startListening(isFollowUp = false, delayMs = CHIME_MS)
+        startListening(isFollowUp = false, delayMs = MIC_HANDOVER_MS)
     }
 
     /** Dotknięcie reaktora: start rozmowy albo jej zakończenie. */
@@ -156,9 +162,8 @@ object Assistant {
                 setState(AssistantState.IDLE)
             }
             else -> {
-                Sounds.playChime()
                 conversation = true
-                startListening(isFollowUp = false, delayMs = CHIME_MS)
+                startListening(isFollowUp = false, delayMs = MIC_HANDOVER_MS)
             }
         }
     }
@@ -182,7 +187,7 @@ object Assistant {
         dataChanged()
     }
 
-    private fun startListening(isFollowUp: Boolean, delayMs: Long = 300, isRetry: Boolean = false) {
+    private fun startListening(isFollowUp: Boolean, delayMs: Long = MIC_HANDOVER_MS, isRetry: Boolean = false) {
         val ctx = appContext ?: return
         if (!SpeechRecognizer.isRecognitionAvailable(ctx)) {
             conversation = false
@@ -345,7 +350,12 @@ object Assistant {
         override fun onError(error: Int) {
             // Spóźniony błąd po przerwaniu słuchania – nie psujemy bieżącego stanu.
             if (state.value != AssistantState.LISTENING) return
-            if ((error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) && retryQuietly()) return
+            when (error) {
+                SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> if (retryQuietly()) return
+                // Usługa się zacięła (często tuż po oddaniu mikrofonu) – nowa instancja zwykle działa.
+                SpeechRecognizer.ERROR_RECOGNIZER_BUSY, SpeechRecognizer.ERROR_CLIENT, SpeechRecognizer.ERROR_AUDIO ->
+                    if (retryQuietly(freshRecognizer = true)) return
+            }
             val wasFollowUp = followUp
             endConversation()
             val message = when (error) {
@@ -364,14 +374,20 @@ object Assistant {
     }
 
     /**
-     * Po „Hey Jarvis” rozpoznawanie czasem startuje za późno i nic nie łapie –
-     * wtedy raz, bez sygnału, słuchamy jeszcze raz.
+     * Po „Hey Jarvis” rozpoznawanie czasem startuje za późno albo się zacina –
+     * wtedy po cichu słuchamy jeszcze raz (do [MAX_RETRIES] razy), żeby nie trzeba było klikać.
+     * Po odpowiedzi (dopytanie) też raz ponawiamy, gdy usługa się zacięła.
      */
-    private fun retryQuietly(): Boolean {
-        if (followUp || retries >= 1) return false
+    private fun retryQuietly(freshRecognizer: Boolean = false): Boolean {
+        val limit = if (followUp) (if (freshRecognizer) 1 else 0) else MAX_RETRIES
+        if (retries >= limit) return false
         retries++
         partial.value = ""
-        startListening(isFollowUp = false, delayMs = 100, isRetry = true)
+        if (freshRecognizer) {
+            recognizer?.destroy()
+            recognizer = null
+        }
+        startListening(isFollowUp = followUp, delayMs = if (freshRecognizer) 400 else 100, isRetry = true)
         return true
     }
 
