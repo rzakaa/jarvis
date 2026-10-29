@@ -45,8 +45,8 @@ android {
         applicationId = "pl.jarvis"
         minSdk = 26
         targetSdk = 36
-        versionCode = 20
-        versionName = "0.20"
+        versionCode = 21
+        versionName = "0.21"
     }
 
     buildTypes {

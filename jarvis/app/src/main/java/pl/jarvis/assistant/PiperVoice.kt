@@ -6,6 +6,7 @@ import android.media.AudioFormat
 import android.media.AudioTrack
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import com.k2fsa.sherpa.onnx.OfflineTts
 import com.k2fsa.sherpa.onnx.OfflineTtsConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
@@ -21,6 +22,8 @@ import java.util.concurrent.Executors
  */
 object PiperVoice {
     enum class Status { NOT_DOWNLOADED, DOWNLOADING, LOADING, READY, ERROR }
+
+    private const val TAG = "JarvisVoice"
 
     /** Polskie głosy z wydania sherpa-onnx „tts-models”. Medium są 2–3× szybsze od high. */
     enum class Voice(val id: String, val label: String, val sizeMb: Int) {
@@ -186,6 +189,7 @@ object PiperVoice {
         val gen = ++generation
         worker.execute {
             if (gen != generation) return@execute
+            Log.d(TAG, "mówię: ${text.take(40)}")
             val engine = tts
             if (engine == null) {
                 main.post(onDone)
@@ -213,12 +217,36 @@ object PiperVoice {
             try {
                 out.play()
                 val sink = Sink(gen, out)
+                val started = System.currentTimeMillis()
                 engine.generateWithCallback(forSpeech(text), 0, 1.0f, sink)
+                // Znacznik chroni tylko kod natywny – zamknięcie aplikacji w trakcie odtwarzania to nie awaria głosu.
+                speaking?.delete()
                 val written = sink.written
-                // Czekamy, aż wybrzmi to, co jeszcze jest w buforze.
-                while (gen == generation && out.playbackHeadPosition < written) Thread.sleep(20)
-            } catch (_: Exception) {
+                Log.d(TAG, "wygenerowano $written próbek (${engine.sampleRate()} Hz) w ${System.currentTimeMillis() - started} ms")
+                // Strumień zaczyna grać dopiero po zapełnieniu bufora (~1 s) – krótkie „Słucham?”
+                // nigdy by nie ruszyło. Dopełniamy bufor ciszą; czekamy potem tylko na prawdziwe próbki.
+                if (gen == generation) {
+                    val silence = FloatArray(out.bufferSizeInFrames)
+                    out.write(silence, 0, silence.size, AudioTrack.WRITE_BLOCKING)
+                }
+                // Czekamy, aż wybrzmi to, co jeszcze jest w buforze. Gdy odtwarzanie stoi
+                // (pozycja nie rośnie przez 2 s), kończymy – inaczej Jarvis wisiałby na „mówię”.
+                var lastHead = -1
+                var stalledSince = System.currentTimeMillis()
+                while (gen == generation && out.playbackHeadPosition < written) {
+                    val head = out.playbackHeadPosition
+                    if (head != lastHead) {
+                        lastHead = head
+                        stalledSince = System.currentTimeMillis()
+                    } else if (System.currentTimeMillis() - stalledSince > 2000) {
+                        Log.w(TAG, "odtwarzanie stoi na $head z $written próbek – przerywam")
+                        break
+                    }
+                    Thread.sleep(20)
+                }
+            } catch (e: Exception) {
                 // Błąd odtwarzania – po prostu kończymy wypowiedź.
+                Log.w(TAG, "błąd mówienia", e)
             } finally {
                 speaking?.delete()
                 runCatching { out.stop() }

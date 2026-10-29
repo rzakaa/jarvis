@@ -98,6 +98,7 @@ object Assistant {
         if (appContext != null) return
         val ctx = context.applicationContext
         appContext = ctx
+        Sounds.restoreAfterRestart(ctx)
         ledger = LedgerStore.load(ctx)
         localBrain = Brain(ledger)
         reloadSettings()
