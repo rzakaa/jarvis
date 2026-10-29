@@ -1,4 +1,13 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
+
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
+}
 
 /**
  * sherpa-onnx (synteza mowy Piper) nie jest w repozytorium Maven – AAR pobieramy z GitHuba
@@ -13,12 +22,12 @@ fun sherpaOnnxAar(): File {
     aar.parentFile.mkdirs()
     val url = uri("https://github.com/k2-fsa/sherpa-onnx/releases/download/v$version/sherpa-onnx-$version.aar").toURL()
     val tmp = File(aar.path + ".tmp")
-    java.util.zip.ZipInputStream(url.openStream().buffered()).use { input ->
-        java.util.zip.ZipOutputStream(tmp.outputStream().buffered()).use { output ->
+    ZipInputStream(url.openStream().buffered()).use { input ->
+        ZipOutputStream(tmp.outputStream().buffered()).use { output ->
             while (true) {
                 val entry = input.nextEntry ?: break
                 if (entry.name.endsWith("libonnxruntime.so")) continue
-                output.putNextEntry(java.util.zip.ZipEntry(entry.name))
+                output.putNextEntry(ZipEntry(entry.name))
                 input.copyTo(output)
                 output.closeEntry()
             }
@@ -26,12 +35,6 @@ fun sherpaOnnxAar(): File {
     }
     check(tmp.renameTo(aar)) { "Nie udało się zapisać ${aar.path}" }
     return aar
-}
-
-plugins {
-    id("com.android.application")
-    id("org.jetbrains.kotlin.android")
-    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 android {
