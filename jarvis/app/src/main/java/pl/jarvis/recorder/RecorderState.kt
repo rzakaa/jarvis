@@ -74,6 +74,7 @@ object Prefs {
     private const val KIMI_MODEL = "kimi_model"
     private const val PIPER_VOICE = "piper_voice"
     private const val PIPER_VOICE_ID = "piper_voice_id"
+    private const val AUTO_SUMMARIES = "auto_summaries"
 
     private fun prefs(context: Context) =
         context.getSharedPreferences("jarvis", Context.MODE_PRIVATE)
@@ -154,6 +155,14 @@ object Prefs {
     fun piperVoice(context: Context) = prefs(context).getBoolean(PIPER_VOICE, true)
 
     fun setPiperVoice(context: Context, value: Boolean) = prefs(context).edit().putBoolean(PIPER_VOICE, value).apply()
+
+    /**
+     * Skróty nagrań przez AI zaraz po przepisaniu (kosztują tokeny). Domyślnie wyłączone:
+     * teksty leżą w telefonie, a Jarvis przeszukuje je dopiero, gdy użytkownik zapyta.
+     */
+    fun autoSummaries(context: Context) = prefs(context).getBoolean(AUTO_SUMMARIES, false)
+
+    fun setAutoSummaries(context: Context, value: Boolean) = prefs(context).edit().putBoolean(AUTO_SUMMARIES, value).apply()
 
     /** Który głos Piper (np. „jarvis_wg_glos-medium”); null = domyślny. */
     fun piperVoiceId(context: Context): String? = prefs(context).getString(PIPER_VOICE_ID, null)

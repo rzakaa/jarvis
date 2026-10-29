@@ -56,8 +56,8 @@ object RecordingNotes {
      */
     fun search(context: Context, from: LocalDate, to: LocalDate, query: String): String {
         val words = query.lowercase().split(Regex("\\W+")).filter { it.length >= 3 }
-            // Bez końcówek: „fryzjerem” znajdzie „fryzjer”.
-            .map { if (it.length > 5) it.take(it.length - 2) else it }
+            // Bez końcówek: „Piotrkiem” znajdzie „Piotrek”, „dostawy” – „dostawa” (pierwsze 5 liter).
+            .map { it.take(5) }.distinct()
         val root = File(context.filesDir, "recordings")
         val out = StringBuilder()
         var day = from
@@ -68,20 +68,39 @@ object RecordingNotes {
                 val haystack = (summary?.toString().orEmpty() + " " + transcript).lowercase()
                 if (words.isNotEmpty() && words.none { haystack.contains(it) }) return@forEach
                 val time = wav.nameWithoutExtension.replace('-', ':')
-                out.append("$day $time – ")
+                out.append("[nagranie $day $time] ")
                 when {
-                    summary != null -> out.append("${summary.optString("temat")}: ${summary.optString("skrot")}")
+                    summary != null -> {
+                        out.append("${summary.optString("temat")}: ${summary.optString("skrot")}")
+                        summary.optJSONArray("osoby").strings().takeIf { it.isNotEmpty() }?.let { out.append(" Osoby: ${it.joinToString()}.") }
+                        summary.optJSONArray("ustalenia").strings().takeIf { it.isNotEmpty() }?.let { out.append(" Ustalenia: ${it.joinToString("; ")}.") }
+                    }
                     transcript.isNotBlank() -> out.append("(bez skrótu) ${transcript.take(300)}")
                     else -> out.append("(jeszcze nie przepisane)")
                 }
-                val hit = words.firstNotNullOfOrNull { w -> transcript.lowercase().indexOf(w).takeIf { it >= 0 } }
-                if (hit != null) out.append(" | fragment: „${transcript.substring((hit - 200).coerceAtLeast(0), (hit + 300).coerceAtMost(transcript.length))}”")
+                // Fragment tekstu wokół każdego szukanego słowa (najwyżej trzy).
+                val lower = transcript.lowercase()
+                words.mapNotNull { w -> lower.indexOf(w).takeIf { it >= 0 } }.distinct().sorted().take(3).forEach { hit ->
+                    out.append(" | fragment: „${transcript.substring((hit - 200).coerceAtLeast(0), (hit + 300).coerceAtMost(transcript.length))}”")
+                }
                 out.append('\n')
                 if (out.length > 6000) return out.toString()
             }
             day = day.plusDays(1)
         }
         return out.toString().ifBlank { "Brak nagrań" + (if (words.isNotEmpty()) " pasujących do „$query”" else "") + " w dniach $from – $to." }
+    }
+
+    /** Pełny tekst jednego nagrania (dla narzędzia czytaj_nagranie). [time] – „GG:MM” albo „GG:MM:SS”. */
+    fun read(context: Context, day: LocalDate, time: String): String {
+        val dir = File(context.filesDir, "recordings/$day")
+        val prefix = time.trim().replace(':', '-')
+        val wav = dir.listFiles().orEmpty().filter { it.extension == "wav" && it.nameWithoutExtension.startsWith(prefix) }
+            .minByOrNull { it.name } ?: return "Nie ma nagrania z $day o $time."
+        val text = Transcriber.transcriptOf(wav).takeIf { it.exists() }?.readText()
+            ?: return "Nagranie z $day ${wav.nameWithoutExtension.replace('-', ':')} nie jest jeszcze przepisane."
+        return "Nagranie $day ${wav.nameWithoutExtension.replace('-', ':')} (automatyczna transkrypcja, może mieć błędy):\n" +
+            mask(text).take(12_000)
     }
 
     private fun JSONArray?.strings(): List<String> =
@@ -91,9 +110,13 @@ object RecordingNotes {
         Jesteś Jarvis, asystent użytkownika. Dostajesz automatyczną transkrypcję rozmowy nagranej w otoczeniu
         użytkownika (może mieć błędy rozpoznawania, brak podziału na osoby). Zwróć obiekt JSON:
         {"temat": "kilka słów", "skrot": "2–4 zdania: kto, o czym, co ustalono",
+         "osoby": ["imiona, nazwiska, firmy wymienione w rozmowie"],
+         "ustalenia": ["każdy konkret z rozmowy, z kontekstem: godziny, dni, terminy dostaw, kwoty, ceny, ilości,
+                       materiały, adresy, numery – np. „Piotrek: dostawa materiałów jutro o 7:30”"],
          "zadania": ["rzeczy do zrobienia dla użytkownika: obietnice, prośby klientów, terminy, telefony do oddzwonienia"],
          "fakty": ["nowe trwałe informacje o użytkowniku i jego otoczeniu, krótko, w trzeciej osobie"]}
-        Zasady: pisz po polsku; nie wymyślaj; zadania tylko konkretne i wynikające z rozmowy; fakty tylko nowe
-        (pomiń to, co już wiadomo). Gdy to szum, telewizja, muzyka albo nic istotnego – "skrot": "" i puste listy.
+        Zasady: pisz po polsku; nie wymyślaj; w ustaleniach zapisz wszystkie konkrety, nawet drobne – użytkownik
+        będzie o nie później pytał; zadania tylko konkretne i wynikające z rozmowy; fakty tylko nowe (pomiń to, co
+        już wiadomo). Gdy to szum, telewizja, muzyka albo nic istotnego – "skrot": "" i puste listy.
     """.trimIndent()
 }

@@ -98,7 +98,7 @@ fun RecordingsScreen() {
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item { HudLabel("rejestrator rozmów · wersja 0.26", color = Hud.Cyan, size = 13.sp) }
+        item { HudLabel("rejestrator rozmów · wersja 0.27", color = Hud.Cyan, size = 13.sp) }
         item { StatusPanel(status, onToggle) }
         item { SettingsPanel(status) }
         error?.let { message -> item { Text(message, color = Hud.Red, fontSize = 14.sp) } }
@@ -191,9 +191,16 @@ private fun TranscriptionPanel() {
             (status == Transcriber.Status.READY || status == Transcriber.Status.ERROR) && pending > 0 ->
                 HudButton("przepisz teraz", onClick = { Transcriber.runPending(context) }, modifier = Modifier.padding(top = 8.dp))
         }
+        var summaries by remember { mutableStateOf(Prefs.autoSummaries(context)) }
+        HudLabel("skróty ai po każdej rozmowie", modifier = Modifier.padding(top = 10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 6.dp)) {
+            HudChip("wyłączone", !summaries, onClick = { summaries = false; Prefs.setAutoSummaries(context, false) })
+            HudChip("włączone", summaries, onClick = { summaries = true; Prefs.setAutoSummaries(context, true) })
+        }
         Text(
-            "Tekst powstaje w telefonie – samo nagranie nigdy go nie opuszcza. Model pobiera się sam na Wi-Fi, a nagrania przepisuję zaraz po zakończeniu (przy ładowaniu albo od 40% baterii). " +
-                "Ze skrótów Jarvis wyłapuje zadania (np. prośby klientów) i odpowiada na pytania o rozmowy.",
+            "Tekst powstaje w telefonie, za darmo – samo nagranie nigdy go nie opuszcza. Model pobiera się sam na Wi-Fi, a nagrania przepisuję zaraz po zakończeniu (przy ładowaniu albo od 40% baterii). " +
+                "Gdy zapytasz o rozmowę, Jarvis szuka w tekstach i wysyła do AI tylko pasujące fragmenty. " +
+                "Skróty AI (kosztują tokeny) dodatkowo same wyłapują zadania z każdej rozmowy.",
             color = Hud.TextDim,
             fontSize = 12.sp,
             modifier = Modifier.padding(top = 6.dp),

@@ -109,8 +109,9 @@ object Assistant {
         PiperVoice.prepare(ctx)
         // Nagrania: tekst → skrót, zadania i fakty; Jarvis może w nich szukać.
         Transcriber.prepare(ctx)
-        Transcriber.onTranscribed = { c, wav, text -> RecordingNotes.process(c, wav, text) }
+        Transcriber.onTranscribed = { c, wav, text -> if (Prefs.autoSummaries(c)) RecordingNotes.process(c, wav, text) }
         JarvisTools.recordingsSearch = { from, to, query -> RecordingNotes.search(ctx, from, to, query) }
+        JarvisTools.recordingRead = { day, time -> RecordingNotes.read(ctx, day, time) }
         addMessage(
             ChatMessage(
                 false,

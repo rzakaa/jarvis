@@ -16,6 +16,7 @@ import com.k2fsa.sherpa.onnx.OfflineNemoEncDecCtcModelConfig
 import com.k2fsa.sherpa.onnx.OfflineRecognizer
 import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
 import kotlinx.coroutines.flow.MutableStateFlow
+import pl.jarvis.assistant.Assistant
 import pl.jarvis.assistant.VoiceDownloader
 import java.io.File
 import java.io.RandomAccessFile
@@ -106,12 +107,16 @@ object Transcriber {
         if (autoStarted) return
         autoStarted = true
         val ctx = context.applicationContext
-        // Tylko wersja testowa: `adb shell am broadcast -a pl.jarvis.DEBUG_TRANSCRIBE` przepisuje od razu.
+        // Tylko wersja testowa (adb shell am broadcast -a …):
+        // DEBUG_TRANSCRIBE – przepisz od razu; DEBUG_ASK --es tekst "…" – zapytaj Jarvisa jak z klawiatury.
         if (ctx.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
             val receiver = object : BroadcastReceiver() {
-                override fun onReceive(c: Context, intent: Intent) = runPending(ctx)
+                override fun onReceive(c: Context, intent: Intent) {
+                    if (intent.action == "pl.jarvis.DEBUG_ASK") intent.getStringExtra("tekst")?.let { Assistant.submitText(it) }
+                    else runPending(ctx)
+                }
             }
-            val filter = IntentFilter("pl.jarvis.DEBUG_TRANSCRIBE")
+            val filter = IntentFilter("pl.jarvis.DEBUG_TRANSCRIBE").apply { addAction("pl.jarvis.DEBUG_ASK") }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) ctx.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
             else ctx.registerReceiver(receiver, filter)
         }

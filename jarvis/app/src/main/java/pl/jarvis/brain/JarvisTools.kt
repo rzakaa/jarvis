@@ -112,6 +112,13 @@ class JarvisTools(private val ledger: Ledger, private val clock: () -> LocalDate
                     val to = (input["do"] as? String)?.takeIf { it.isNotBlank() }?.let { LocalDate.parse(it) } ?: today
                     search(from, to, (input["fraza"] as? String).orEmpty()) to false
                 }
+                "czytaj_nagranie" -> {
+                    val read = recordingRead ?: return "Nagrania są niedostępne." to false
+                    val day = (input["data"] as? String)?.takeIf { it.isNotBlank() }?.let { LocalDate.parse(it) } ?: today
+                    val time = (input["godzina"] as? String)?.trim().orEmpty()
+                    if (time.isEmpty()) return "Błąd: brak godziny nagrania (z wyników szukaj_w_nagraniach)." to false
+                    read(day, time) to false
+                }
                 "pobierz_strone" -> {
                     val url = (input["adres"] as? String)?.trim().orEmpty()
                     if (url.isEmpty()) return "Błąd: brak adresu." to false
@@ -147,6 +154,10 @@ class JarvisTools(private val ledger: Ledger, private val clock: () -> LocalDate
         @Volatile
         var recordingsSearch: ((LocalDate, LocalDate, String) -> String)? = null
 
+        /** Pełny tekst nagrania (dzień, godzina „GG:MM:SS”). */
+        @Volatile
+        var recordingRead: ((LocalDate, String) -> String)? = null
+
         private val CONVERSATION_TIMEOUT: Duration = Duration.ofMinutes(15)
         private const val MAX_HISTORY = 40
         const val MAX_TOOL_ROUNDS = 6
@@ -180,11 +191,17 @@ class JarvisTools(private val ledger: Ledger, private val clock: () -> LocalDate
             konkretnej strony przeczytaj narzędziem pobierz_strone. Pogodę sprawdzaj narzędziem pogoda – gdy
             użytkownik nie poda miasta, weź je z pamięci, a jeśli go tam nie ma, zapytaj i zapamiętaj.
 
-            Nagrania: telefon nagrywa rozmowy w otoczeniu użytkownika, zamienia je na tekst i robi z nich skróty;
-            zadania z rozmów (np. prośby klientów) same trafiają na listę zadań. Gdy użytkownik pyta, o czym
+            Nagrania: telefon nagrywa rozmowy w otoczeniu użytkownika i zamienia je na tekst (czasem też robi
+            skróty). Gdy użytkownik pyta, o czym
             ktoś rozmawiał, co mówił klient, co się działo danego dnia – użyj narzędzia szukaj_w_nagraniach
-            (z frazą albo bez, z właściwym zakresem dat) i odpowiedz krótkim skrótem. Na pytanie „co mam do
-            zrobienia” wymień otwarte zadania ze stanu Jarvisa, także te z rozmów.
+            (z frazą albo bez, z właściwym zakresem dat) i odpowiedz krótko. Szukaj po kilku słowach naraz
+            (imię w różnych formach, temat, np. „Piotrek Piotr dostawa materiały hurtownia”). Gdy pytanie dotyczy
+            szczegółu (godzina, kwota, ilość, termin), a nie ma go w ustaleniach ani we fragmentach – przeczytaj
+            całe pasujące nagranie narzędziem czytaj_nagranie. Transkrypcja jest automatyczna i bez podziału na
+            osoby: gdy coś jest niepewne, powiedz to. Na pytanie „co mam do zrobienia” wymień otwarte zadania
+            ze stanu Jarvisa, a do tego poszukaj w nagraniach z pytanego okresu zobowiązań i próśb (np. fraza
+            „zadzwoń oddzwoń przyjedź zrobić wycena termin dostawa zamówienie jutro”) i przeczytaj obiecujące
+            nagrania; zadania, które z nich wynikają, wymień i zapisz narzędziem dodaj_zadanie.
 
             Prowadzisz też użytkownikowi rejestr zarobków, płatności (m.in. ZUS i alimenty) i zadań.
             - Zanim zapiszesz zarobek, powtórz kwotę i miejsce i zapytaj, czy się zgadza. Zapisz dopiero po potwierdzeniu.
@@ -272,6 +289,15 @@ class JarvisTools(private val ledger: Ledger, private val clock: () -> LocalDate
                     "fraza" to mapOf("type" to "string", "description" to "Słowa kluczowe, np. „fryzjer”, „Kowalski”, „wycena”."),
                 ),
                 emptyList(),
+            ),
+            Spec(
+                "czytaj_nagranie",
+                "Zwraca pełny tekst jednego nagrania – do wyszukania szczegółu, którego nie ma w skrócie.",
+                mapOf(
+                    "data" to mapOf("type" to "string", "description" to "Dzień nagrania, RRRR-MM-DD."),
+                    "godzina" to mapOf("type" to "string", "description" to "Godzina nagrania z wyników szukaj_w_nagraniach, np. „14:03:21”."),
+                ),
+                listOf("data", "godzina"),
             ),
             Spec(
                 "pobierz_strone",
