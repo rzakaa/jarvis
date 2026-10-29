@@ -19,6 +19,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
 import android.os.Process
+import kotlinx.coroutines.flow.update
 import pl.jarvis.MainActivity
 import pl.jarvis.R
 import java.io.File
@@ -27,8 +28,7 @@ import java.time.LocalDateTime
 /**
  * Usługa, która cały czas słucha mikrofonu i zapisuje tylko fragmenty z mową.
  *
- * Cisza nie jest zapisywana. Nagranie zaczyna się, gdy ktoś zaczyna mówić
- * (z sekundą zapasu wstecz), a kończy po [END_SILENCE_FRAMES] ciszy.
+ * Cisza nie jest zapisywana. Kiedy zaczyna się i kończy nagranie, decyduje [Segmenter].
  */
 class RecorderService : Service() {
 
@@ -124,28 +124,37 @@ class RecorderService : Service() {
         val token = Any()
         currentLoop = token
         val vad = VoiceActivityDetector()
-        val preRoll = ArrayDeque<ShortArray>()
-        val recent = BooleanArray(START_WINDOW_FRAMES)
-        var recentIndex = 0
-        var writer: WavWriter? = null
-        var file: File? = null
-        var speechFrames = 0
-        var silenceFrames = 0
-        var segmentFrames = 0
         var frameCounter = 0
+        val segmenter = Segmenter(object : Segmenter.Sink {
+            private var writer: WavWriter? = null
+            private var file: File? = null
 
-        fun finishSegment() {
-            writer?.close()
-            val finished = file
-            writer = null
-            file = null
-            RecorderState.activeFile.value = null
-            // Krótkie stuknięcia, trzaśnięcia drzwiami itp. – nie zostawiamy.
-            if (finished != null && speechFrames < MIN_SPEECH_FRAMES) finished.delete()
-            recent.fill(false)
-            if (running) setStatus(RecorderStatus.LISTENING)
-            RecorderState.recordingsChanged()
-        }
+            override fun startSegment() {
+                val newFile = Recordings.newFile(this@RecorderService, LocalDateTime.now())
+                RecorderState.activeFile.value = newFile
+                file = newFile
+                writer = WavWriter(newFile, sampleRate)
+                setStatus(RecorderStatus.RECORDING)
+            }
+
+            override fun write(frame: ShortArray) {
+                writer?.write(frame, frame.size)
+            }
+
+            override fun finishSegment(keep: Boolean) {
+                writer?.close()
+                writer = null
+                RecorderState.activeFile.value = null
+                // Za mało mowy (stuknięcie, trzask) – usuwamy, ale liczymy, żeby było to widać.
+                if (!keep) {
+                    file?.delete()
+                    RecorderState.discarded.update { it + 1 }
+                }
+                file = null
+                if (running) setStatus(RecorderStatus.LISTENING)
+                RecorderState.recordingsChanged()
+            }
+        })
 
         record.startRecording()
         try {
@@ -157,48 +166,14 @@ class RecorderService : Service() {
                     captured += n
                 }
                 val frame = decimator.process(captureFrame, captured)
-                val read = frame.size
-                if (read == 0) continue
+                if (frame.isEmpty()) continue
 
-                val db = levelDb(frame, read)
+                val db = levelDb(frame, frame.size)
                 if (++frameCounter % 3 == 0) RecorderState.levelDb.value = db
-                val speech = vad.isSpeech(db, RecorderState.sensitivity.value)
-                recent[recentIndex] = speech
-                recentIndex = (recentIndex + 1) % recent.size
-
-                val current = writer
-                if (current == null) {
-                    preRoll.addLast(frame)
-                    if (preRoll.size > PRE_ROLL_FRAMES) preRoll.removeFirst()
-                    if (recent.count { it } >= START_MIN_SPEECH_FRAMES) {
-                        val newFile = Recordings.newFile(this, LocalDateTime.now())
-                        RecorderState.activeFile.value = newFile
-                        val newWriter = WavWriter(newFile, sampleRate)
-                        preRoll.forEach { newWriter.write(it, it.size) }
-                        preRoll.clear()
-                        writer = newWriter
-                        file = newFile
-                        speechFrames = START_MIN_SPEECH_FRAMES
-                        silenceFrames = 0
-                        segmentFrames = 0
-                        setStatus(RecorderStatus.RECORDING)
-                    }
-                } else {
-                    current.write(frame, read)
-                    segmentFrames++
-                    if (speech) {
-                        speechFrames++
-                        silenceFrames = 0
-                    } else {
-                        silenceFrames++
-                    }
-                    if (silenceFrames >= END_SILENCE_FRAMES || segmentFrames >= MAX_SEGMENT_FRAMES) {
-                        finishSegment()
-                    }
-                }
+                segmenter.process(frame, vad.isSpeech(db, RecorderState.sensitivity.value))
             }
         } finally {
-            if (writer != null) finishSegment()
+            segmenter.close()
             record.stop()
             record.release()
             // Jeśli w międzyczasie ruszyło nowe nasłuchiwanie, nie nadpisujemy jego stanu.
@@ -297,14 +272,6 @@ class RecorderService : Service() {
         // Jedna ramka = 30 ms dźwięku przy 16 kHz.
         private const val FRAME_SAMPLES = 480
         private val CAPTURE_RATES = intArrayOf(48_000, Recordings.SAMPLE_RATE)
-        private const val FRAMES_PER_SECOND = 33
-
-        private const val PRE_ROLL_FRAMES = FRAMES_PER_SECOND // 1 s zapasu przed mową
-        private const val START_WINDOW_FRAMES = 10
-        private const val START_MIN_SPEECH_FRAMES = 4 // 4 z ostatnich 10 ramek to mowa
-        private const val END_SILENCE_FRAMES = 8 * FRAMES_PER_SECOND // koniec po 8 s ciszy
-        private const val MIN_SPEECH_FRAMES = FRAMES_PER_SECOND // minimum 1 s mowy
-        private const val MAX_SEGMENT_FRAMES = 10 * 60 * FRAMES_PER_SECOND // maks. 10 min na plik
 
         @Volatile
         private var currentLoop: Any? = null

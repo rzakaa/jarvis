@@ -38,6 +38,9 @@ object RecorderState {
     val micInfo = MutableStateFlow<String?>(null)
     val error = MutableStateFlow<String?>(null)
 
+    /** Ile nagrań odrzucono jako za krótkie (od uruchomienia aplikacji). */
+    val discarded = MutableStateFlow(0)
+
     /** Plik, który właśnie jest nagrywany – ukrywamy go na liście, dopóki się nie zakończy. */
     val activeFile = MutableStateFlow<File?>(null)
 

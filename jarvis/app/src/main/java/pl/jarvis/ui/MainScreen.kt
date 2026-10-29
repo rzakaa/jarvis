@@ -182,7 +182,7 @@ private fun Header() {
             color = MaterialTheme.colorScheme.primary,
         )
         Text(
-            "Etap 1: rejestrator rozmów · wersja 0.3",
+            "Etap 1: rejestrator rozmów · wersja 0.4",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -214,7 +214,7 @@ private fun StatusCard(status: RecorderStatus, onToggle: () -> Unit) {
                 when (status) {
                     RecorderStatus.STOPPED -> "Włącz, żeby Jarvis zapisywał rozmowy z otoczenia."
                     RecorderStatus.LISTENING -> "Czekam na mowę. Cisza nie jest zapisywana."
-                    RecorderStatus.RECORDING -> "Ktoś mówi – zapisuję. Koniec po 8 s ciszy."
+                    RecorderStatus.RECORDING -> "Ktoś mówi – zapisuję. Przerwy do minuty zostają w tym samym nagraniu."
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -318,8 +318,10 @@ private fun BatteryHint(context: Context) {
 private fun TodaySummary(recordings: List<Recording>) {
     val today = recordings.filter { it.start.toLocalDate() == LocalDate.now() }
     val minutes = today.sumOf { it.durationSeconds } / 60
+    val discarded by RecorderState.discarded.collectAsState()
     Text(
-        "Dziś: ${today.size} nagrań · około $minutes min mowy",
+        "Dziś: ${today.size} nagrań · około $minutes min mowy" +
+            if (discarded > 0) " · odrzucone jako za krótkie: $discarded" else "",
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )

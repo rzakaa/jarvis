@@ -43,7 +43,7 @@ mkdir C:\nagrania-jarvis
 1. W aplikacji kliknij **Włącz nasłuchiwanie** i zezwól na mikrofon i powiadomienia.
 2. Status „Nasłuchuję…” – pasek pokazuje głośność.
 3. Powiedz coś przez kilka sekund → status zmieni się na **„Nagrywam rozmowę”**.
-4. Zamilknij na 8 s → nagranie pojawi się na liście (pod „Dzisiaj”). Można je odtworzyć albo usunąć.
+4. Zamilknij na ponad minutę (albo kliknij **Wyłącz**) → nagranie pojawi się na liście (pod „Dzisiaj”). Przerwy krótsze niż minuta zostają w tym samym nagraniu, skrócone do 2 s.
 5. Jeśli nagrywa za dużo (np. szum) albo za mało – zmień **Czułość**.
 
 Nagrania krótsze niż 1 s mowy (stuknięcia, trzaśnięcia drzwiami) są automatycznie odrzucane.
