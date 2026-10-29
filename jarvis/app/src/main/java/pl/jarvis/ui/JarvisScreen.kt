@@ -248,7 +248,19 @@ private fun ChatBubble(message: ChatMessage) {
                 .border(1.dp, (if (message.fromUser) Hud.CyanDim else Hud.Cyan).copy(alpha = 0.5f), HudShape)
                 .padding(horizontal = 12.dp, vertical = 8.dp),
         ) {
-            HudLabel(if (message.fromUser) "ty" else "jarvis", size = 9.sp, color = if (message.fromUser) Hud.TextDim else Hud.Cyan)
+            HudLabel(
+                when {
+                    message.fromUser -> "ty"
+                    message.source != null -> "jarvis · ${message.source}"
+                    else -> "jarvis"
+                },
+                size = 9.sp,
+                color = when {
+                    message.fromUser -> Hud.TextDim
+                    message.source?.contains("błąd") == true -> Hud.Red
+                    else -> Hud.Cyan
+                },
+            )
             Text(message.text, color = Hud.Text, fontSize = 15.sp)
         }
     }

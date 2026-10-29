@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
@@ -30,6 +31,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import pl.jarvis.assistant.Assistant
+import pl.jarvis.assistant.PiperVoice
+import pl.jarvis.brain.Ledger
 import pl.jarvis.brain.OpenAiCompatibleBrain
 import pl.jarvis.recorder.AiProvider
 import pl.jarvis.recorder.AssistantSettings
@@ -48,6 +51,7 @@ fun SettingsScreen() {
     var saved by remember { mutableStateOf(false) }
     var models by remember { mutableStateOf<List<String>>(emptyList()) }
     var modelsStatus by remember { mutableStateOf<String?>(null) }
+    var aiTest by remember { mutableStateOf<String?>(null) }
     val aiEnabled by Assistant.aiEnabled.collectAsState()
     val wakeStatus by RecorderState.wakeWordStatus.collectAsState()
     val recorderStatus by RecorderState.status.collectAsState()
@@ -62,7 +66,7 @@ fun SettingsScreen() {
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item { HudLabel("opcje · wersja 0.10", color = Hud.Cyan, size = 13.sp) }
+        item { HudLabel("opcje · wersja 0.11", color = Hud.Cyan, size = 13.sp) }
 
         item {
             HudPanel(modifier = Modifier.fillMaxWidth(), title = "sztuczna inteligencja") {
@@ -165,7 +169,76 @@ fun SettingsScreen() {
             )
         }
 
+        item {
+            HudButton(
+                "testuj ai",
+                onClick = {
+                    aiTest = "łączę…"
+                    val current = settings
+                    scope.launch {
+                        aiTest = withContext(Dispatchers.IO) {
+                            val brain = Assistant.buildBrain(current, Ledger())
+                            if (brain == null) {
+                                "Brak klucza albo modelu dla wybranego AI."
+                            } else {
+                                runCatching { "Odpowiedź: " + brain.handle("Powiedz jednym krótkim zdaniem po polsku, że połączenie działa.").text }
+                                    .getOrElse { e -> "Błąd: ${e.message ?: e.javaClass.simpleName}" }
+                            }
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            aiTest?.let { Text(it, color = if (it.startsWith("Błąd")) Hud.Red else Hud.Text, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp)) }
+        }
+
+        item { VoicePanel() }
+
         item { Hint("Klucze są zapisane tylko w tym telefonie, w prywatnych danych aplikacji.") }
+    }
+}
+
+/** Głos Jarvisa: Piper pl_PL-bass-high (pobierany raz) albo głos systemowy. */
+@Composable
+private fun VoicePanel() {
+    val context = LocalContext.current
+    val status by PiperVoice.status.collectAsState()
+    val progress by PiperVoice.progress.collectAsState()
+    val error by PiperVoice.error.collectAsState()
+    var piper by remember { mutableStateOf(Prefs.piperVoice(context)) }
+    HudPanel(modifier = Modifier.fillMaxWidth(), title = "głos jarvisa") {
+        HudLabel(
+            when (status) {
+                PiperVoice.Status.NOT_DOWNLOADED -> "piper bass-high: nie pobrany (ok. 115 mb)"
+                PiperVoice.Status.DOWNLOADING -> "pobieram… ${(progress * 100).toInt()}%"
+                PiperVoice.Status.LOADING -> "wczytuję głos…"
+                PiperVoice.Status.READY -> "piper bass-high: gotowy"
+                PiperVoice.Status.ERROR -> "błąd: ${error ?: "?"}"
+            },
+            color = when (status) {
+                PiperVoice.Status.READY -> Hud.Green
+                PiperVoice.Status.ERROR -> Hud.Red
+                else -> Hud.Amber
+            },
+        )
+        if (status == PiperVoice.Status.DOWNLOADING) {
+            LinearProgressIndicator(
+                progress = { progress },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
+                color = Hud.Cyan,
+                trackColor = Hud.CyanDim.copy(alpha = 0.3f),
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 8.dp)) {
+            HudChip("Piper · bass-high", piper, onClick = { piper = true; Prefs.setPiperVoice(context, true) })
+            HudChip("Systemowy", !piper, onClick = { piper = false; Prefs.setPiperVoice(context, false) })
+        }
+        if (status == PiperVoice.Status.NOT_DOWNLOADED || status == PiperVoice.Status.ERROR) {
+            HudButton("pobierz głos", onClick = { PiperVoice.download(context) }, filled = true)
+        }
+        Hint("Głos działa w telefonie bez internetu. Pobierz raz przez Wi-Fi; do tego czasu Jarvis mówi głosem systemowym.")
     }
 }
 

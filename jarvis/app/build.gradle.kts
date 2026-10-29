@@ -1,5 +1,33 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
+/**
+ * sherpa-onnx (synteza mowy Piper) nie jest w repozytorium Maven – AAR pobieramy z GitHuba
+ * przy pierwszym budowaniu do app/libs. Wycinamy z niego libonnxruntime.so, bo aplikacja
+ * ma już pełny ONNX Runtime z com.microsoft.onnxruntime. Wersje muszą do siebie pasować:
+ * sherpa-onnx 1.13.0 wymaga symboli VERS_1.24.3, a onnxruntime-android 1.24.3 dokładnie je udostępnia.
+ */
+fun sherpaOnnxAar(): File {
+    val version = "1.13.0"
+    val aar = file("libs/sherpa-onnx-$version-bez-onnxruntime.aar")
+    if (aar.exists()) return aar
+    aar.parentFile.mkdirs()
+    val url = uri("https://github.com/k2-fsa/sherpa-onnx/releases/download/v$version/sherpa-onnx-$version.aar").toURL()
+    val tmp = File(aar.path + ".tmp")
+    java.util.zip.ZipInputStream(url.openStream().buffered()).use { input ->
+        java.util.zip.ZipOutputStream(tmp.outputStream().buffered()).use { output ->
+            while (true) {
+                val entry = input.nextEntry ?: break
+                if (entry.name.endsWith("libonnxruntime.so")) continue
+                output.putNextEntry(java.util.zip.ZipEntry(entry.name))
+                input.copyTo(output)
+                output.closeEntry()
+            }
+        }
+    }
+    check(tmp.renameTo(aar)) { "Nie udało się zapisać ${aar.path}" }
+    return aar
+}
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -14,8 +42,8 @@ android {
         applicationId = "pl.jarvis"
         minSdk = 29
         targetSdk = 36
-        versionCode = 10
-        versionName = "0.10"
+        versionCode = 11
+        versionName = "0.11"
     }
 
     buildTypes {
@@ -65,7 +93,11 @@ dependencies {
     // Ta sama wersja co kompilator Kotlina (biblioteka Claude ciągnie starszą przez Jacksona).
     implementation("org.jetbrains.kotlin:kotlin-reflect:2.2.20")
     // Wykrywanie „Hey Jarvis” (openWakeWord) – modele ONNX w assets/wakeword.
-    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.31.1")
+    // Wersja 1.24.3 – dokładnie ta, z którą zbudowano sherpa-onnx 1.13.0 (głos Piper).
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.24.3")
+    // Głos Piper (sherpa-onnx) i rozpakowywanie pobranego głosu.
+    implementation(files(sherpaOnnxAar()))
+    implementation("org.apache.commons:commons-compress:1.27.1")
     // Zapytania do API zgodnych z OpenAI (np. Kimi).
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }

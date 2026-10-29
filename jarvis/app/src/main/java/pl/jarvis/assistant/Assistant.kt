@@ -19,6 +19,7 @@ import pl.jarvis.brain.Ledger
 import pl.jarvis.brain.LedgerStore
 import pl.jarvis.brain.OpenAiCompatibleBrain
 import pl.jarvis.recorder.AiProvider
+import pl.jarvis.recorder.AssistantSettings
 import pl.jarvis.recorder.Prefs
 import pl.jarvis.recorder.RecorderState
 import java.util.Locale
@@ -26,7 +27,8 @@ import java.util.concurrent.Executors
 
 enum class AssistantState { IDLE, LISTENING, THINKING, SPEAKING }
 
-data class ChatMessage(val fromUser: Boolean, val text: String)
+/** [source] – kto odpowiedział: „kimi”, „claude”, „lokalnie”. */
+data class ChatMessage(val fromUser: Boolean, val text: String, val source: String? = null)
 
 /**
  * Rozmowa z Jarvisem: słuchanie (rozpoznawanie mowy po polsku), myślenie (Claude, a bez
@@ -57,6 +59,7 @@ object Assistant {
 
     private lateinit var localBrain: Brain
     private var ai: AiBrain? = null
+    private var aiName = "lokalnie"
     private var appContext: Context? = null
     private var tts: TextToSpeech? = null
     private var ttsReady = false
@@ -85,6 +88,7 @@ object Assistant {
         ledger = LedgerStore.load(ctx)
         localBrain = Brain(ledger)
         reloadSettings()
+        PiperVoice.prepare(ctx)
         addMessage(
             ChatMessage(
                 false,
@@ -116,14 +120,18 @@ object Assistant {
     fun reloadSettings() {
         val ctx = appContext ?: return
         val s = Prefs.assistantSettings(ctx)
-        ai = when (s.provider) {
-            AiProvider.CLAUDE -> s.claudeKey.takeIf { it.isNotBlank() }?.let {
-                ClaudeBrain(it, ledger, if (s.smart) ClaudeBrain.MODEL_SMART else ClaudeBrain.MODEL_FAST)
-            }
-            AiProvider.KIMI -> if (s.kimiKey.isBlank() || s.kimiModel.isBlank()) null
-            else OpenAiCompatibleBrain(s.kimiKey, s.kimiBaseUrl, s.kimiModel, ledger)
-        }
+        ai = buildBrain(s, ledger)
+        aiName = if (ai == null) "lokalnie" else s.provider.name.lowercase()
         aiEnabled.value = ai != null
+    }
+
+    /** Tworzy mózg AI według ustawień (null = brak klucza/modelu). Używane też przez „Testuj AI”. */
+    fun buildBrain(s: AssistantSettings, ledger: Ledger): AiBrain? = when (s.provider) {
+        AiProvider.CLAUDE -> s.claudeKey.takeIf { it.isNotBlank() }?.let {
+            ClaudeBrain(it, ledger, if (s.smart) ClaudeBrain.MODEL_SMART else ClaudeBrain.MODEL_FAST)
+        }
+        AiProvider.KIMI -> if (s.kimiKey.isBlank() || s.kimiModel.isBlank()) null
+        else OpenAiCompatibleBrain(s.kimiKey, s.kimiBaseUrl, s.kimiModel, ledger)
     }
 
     /** Wywoływane przez rejestrator, gdy usłyszy słowo „Jarvis”. */
@@ -143,6 +151,7 @@ object Assistant {
             }
             AssistantState.SPEAKING -> {
                 tts?.stop()
+                PiperVoice.stop()
                 conversation = false
                 setState(AssistantState.IDLE)
             }
@@ -160,6 +169,7 @@ object Assistant {
         conversation = false
         recognizer?.cancel()
         tts?.stop()
+        PiperVoice.stop()
         handleText(text.trim())
     }
 
@@ -180,6 +190,7 @@ object Assistant {
             return
         }
         tts?.stop()
+        PiperVoice.stop()
         followUp = isFollowUp
         if (!isRetry) retries = 0
         val r = recognizer ?: SpeechRecognizer.createSpeechRecognizer(ctx).also {
@@ -214,37 +225,47 @@ object Assistant {
         val brain = ai
         if (brain == null) {
             val reply = localBrain.handle(text)
-            onReply(reply.text, reply.changed, reply.expectsAnswer)
+            onReply(reply.text, reply.changed, reply.expectsAnswer, "lokalnie")
             return
         }
+        val name = aiName
         worker.execute {
             try {
                 val result = brain.handle(text)
-                handler.post { onReply(result.text, result.changed, false) }
+                handler.post { onReply(result.text, result.changed, false, name) }
             } catch (e: Exception) {
                 // Bez internetu albo błąd API – radzimy sobie lokalnymi komendami.
                 handler.post {
                     val reply = localBrain.handle(text)
-                    addMessage(ChatMessage(false, "(Brak połączenia z AI: ${e.message?.take(80)})"))
-                    onReply(reply.text, reply.changed, reply.expectsAnswer)
+                    addMessage(ChatMessage(false, "Błąd AI: ${e.message?.take(400) ?: e.javaClass.simpleName}", "$name – błąd"))
+                    onReply(reply.text, reply.changed, reply.expectsAnswer, "lokalnie")
                 }
             }
         }
     }
 
-    private fun onReply(text: String, changed: Boolean, expectsAnswer: Boolean) {
+    private fun onReply(text: String, changed: Boolean, expectsAnswer: Boolean, source: String) {
         if (changed) dataChanged()
         if (expectsAnswer) conversation = true
-        say(text)
+        say(text, source)
     }
 
-    private fun say(text: String) {
-        addMessage(ChatMessage(false, text))
+    private fun say(text: String, source: String? = null) {
+        addMessage(ChatMessage(false, text, source))
+        val wait = (UNMUTE_DELAY_MS + 50 - (System.currentTimeMillis() - listeningEndedAt)).coerceAtLeast(0)
+        val ctx = appContext
+        if (ctx != null && Prefs.piperVoice(ctx) && PiperVoice.isReady) {
+            // Głos Jarvisa: Piper pl_PL-bass-high.
+            setState(AssistantState.SPEAKING)
+            handler.postDelayed({
+                if (state.value == AssistantState.SPEAKING) PiperVoice.speak(text) { afterSpeaking() }
+            }, wait)
+            return
+        }
         val engine = tts
         if (engine != null && ttsReady) {
             setState(AssistantState.SPEAKING)
             // Mówimy dopiero po przywróceniu dźwięku wyciszonego na czas słuchania.
-            val wait = (UNMUTE_DELAY_MS + 50 - (System.currentTimeMillis() - listeningEndedAt)).coerceAtLeast(0)
             val id = "jarvis-${utteranceCounter++}"
             handler.postDelayed({
                 if (state.value == AssistantState.SPEAKING) engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, id)
