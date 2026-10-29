@@ -6,10 +6,13 @@ import org.json.JSONArray
 import org.json.JSONObject
 import pl.jarvis.recorder.Prefs
 import pl.jarvis.recorder.RecorderState
+import pl.jarvis.recorder.Recordings
 import pl.jarvis.recorder.Transcriber
 import java.io.File
+import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 /**
@@ -90,6 +93,30 @@ object RecordingNotes {
         }
         return out.toString().ifBlank { "Brak nagrań" + (if (words.isNotEmpty()) " pasujących do „$query”" else "") + " w dniach $from – $to." }
     }
+
+    /**
+     * Rozmowy skończone w ciągu ostatnich [RECENT_MIN] minut, z tekstem – idą od razu do pytania,
+     * żeby Jarvis odpowiadał o nich bez szukania. Najnowsza na końcu; długie – tylko końcówka.
+     */
+    fun recent(context: Context): List<Pair<String, String>> {
+        val cutoff = System.currentTimeMillis() - RECENT_MIN * 60_000L
+        val clock = DateTimeFormatter.ofPattern("HH:mm:ss")
+        return Recordings.list(context).asSequence()
+            .filter { it.file.lastModified() >= cutoff }
+            .take(3)
+            .mapNotNull { rec ->
+                val text = Transcriber.transcriptOf(rec.file).takeIf { it.exists() }?.readText()?.trim()
+                    ?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+                val end = Instant.ofEpochMilli(rec.file.lastModified()).atZone(ZoneId.systemDefault()).toLocalTime()
+                val label = "nagranie ${rec.start.toLocalDate()} ${rec.start.toLocalTime().format(clock)}–${end.format(clock)}"
+                val body = mask(text).let { if (it.length > RECENT_CHARS) "(początek pominięty – czytaj_nagranie) …" + it.takeLast(RECENT_CHARS) else it }
+                label to body
+            }
+            .toList().reversed()
+    }
+
+    private const val RECENT_MIN = 30
+    private const val RECENT_CHARS = 5000
 
     /** Pełny tekst jednego nagrania (dla narzędzia czytaj_nagranie). [time] – „GG:MM” albo „GG:MM:SS”. */
     fun read(context: Context, day: LocalDate, time: String): String {

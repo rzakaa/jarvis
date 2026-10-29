@@ -29,9 +29,15 @@ class JarvisTools(private val ledger: Ledger, private val clock: () -> LocalDate
     /** Opis narzędzia: nazwa, opis i schemat parametrów (JSON Schema jako mapy). */
     data class Spec(val name: String, val description: String, val properties: Map<String, Map<String, Any>>, val required: List<String>)
 
+    /** Świeże rozmowy, które już są w historii czatu (nie wysyłamy ich drugi raz). */
+    private val shownConversations = mutableSetOf<String>()
+
     /** Czy zacząć rozmowę od nowa (dłuższa przerwa albo bardzo długa historia). */
-    fun shouldReset(lastActivity: LocalDateTime?, now: LocalDateTime, historySize: Int) =
-        lastActivity == null || Duration.between(lastActivity, now) > CONVERSATION_TIMEOUT || historySize > MAX_HISTORY
+    fun shouldReset(lastActivity: LocalDateTime?, now: LocalDateTime, historySize: Int): Boolean {
+        val reset = lastActivity == null || Duration.between(lastActivity, now) > CONVERSATION_TIMEOUT || historySize > MAX_HISTORY
+        if (reset) shownConversations.clear()
+        return reset
+    }
 
     fun now(): LocalDateTime = clock()
 
@@ -49,7 +55,16 @@ class JarvisTools(private val ledger: Ledger, private val clock: () -> LocalDate
         return "[Stan Jarvisa – teraz $today ${"%02d:%02d".format(now.hour, now.minute)}, ${Polish.dayName(today)}. " +
             "Zarobki ${Polish.inMonth(month, today)}: ${Polish.formatMoney(incomes.sumOf { it.grosze })} " +
             "(${incomes.size} wpłat). Płatności za bieżący miesiąc: $payments. Otwarte zadania: $notes. " +
-            "Pamięć o użytkowniku: $memory.]"
+            "Pamięć o użytkowniku: $memory.]" + freshConversations()
+    }
+
+    /** Tekst rozmów nagranych przed chwilą – każda tylko raz, żeby Jarvis odpowiadał o nich od razu. */
+    private fun freshConversations(): String {
+        val fresh = recentConversations?.invoke().orEmpty().filter { it.first !in shownConversations }
+        if (fresh.isEmpty()) return ""
+        shownConversations += fresh.map { it.first }
+        return "\n[Rozmowy nagrane przed chwilą (automatyczna transkrypcja, bez podziału na osoby, może mieć błędy):\n" +
+            fresh.joinToString("\n") { "${it.first}: ${it.second}" } + "]"
     }
 
     /** Wykonuje narzędzie. Zwraca (wynik dla modelu, czy zmieniły się dane). */
@@ -154,6 +169,10 @@ class JarvisTools(private val ledger: Ledger, private val clock: () -> LocalDate
         @Volatile
         var recordingsSearch: ((LocalDate, LocalDate, String) -> String)? = null
 
+        /** Świeże rozmowy (opis nagrania, tekst) – z ostatnich minut, najnowsza na końcu. */
+        @Volatile
+        var recentConversations: (() -> List<Pair<String, String>>)? = null
+
         /** Pełny tekst nagrania (dzień, godzina „GG:MM:SS”). */
         @Volatile
         var recordingRead: ((LocalDate, String) -> String)? = null
@@ -192,7 +211,9 @@ class JarvisTools(private val ledger: Ledger, private val clock: () -> LocalDate
             użytkownik nie poda miasta, weź je z pamięci, a jeśli go tam nie ma, zapytaj i zapamiętaj.
 
             Nagrania: telefon nagrywa rozmowy w otoczeniu użytkownika i zamienia je na tekst (czasem też robi
-            skróty). Gdy użytkownik pyta, o czym
+            skróty). Rozmowy sprzed chwili dostajesz od razu w nawiasie „Rozmowy nagrane przed chwilą” – gdy pytanie
+            dotyczy tego, co przed chwilą mówiono („o czym była ta rozmowa”, „co powiedział”), odpowiedz od razu
+            z tego tekstu, bez narzędzi. Gdy użytkownik pyta o wcześniejsze rozmowy, o czym
             ktoś rozmawiał, co mówił klient, co się działo danego dnia – użyj narzędzia szukaj_w_nagraniach
             (z frazą albo bez, z właściwym zakresem dat) i odpowiedz krótko. Szukaj po kilku słowach naraz
             (imię w różnych formach, temat, np. „Piotrek Piotr dostawa materiały hurtownia”). Gdy pytanie dotyczy

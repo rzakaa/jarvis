@@ -91,6 +91,8 @@ object Assistant {
 
     /** Chwila dla rejestratora na oddanie mikrofonu przed startem rozpoznawania. */
     private const val MIC_HANDOVER_MS = 250L
+    /** Najdłużej tyle czekamy na przepisanie rozmowy sprzed chwili. */
+    private const val FRESH_WAIT_MS = 20_000L
 
     /** Systemowe piknięcie końca słuchania potrafi przyjść z opóźnieniem – dźwięk wraca dopiero po nim. */
     private const val UNMUTE_DELAY_MS = 700L
@@ -112,6 +114,7 @@ object Assistant {
         Transcriber.onTranscribed = { c, wav, text -> if (Prefs.autoSummaries(c)) RecordingNotes.process(c, wav, text) }
         JarvisTools.recordingsSearch = { from, to, query -> RecordingNotes.search(ctx, from, to, query) }
         JarvisTools.recordingRead = { day, time -> RecordingNotes.read(ctx, day, time) }
+        JarvisTools.recentConversations = { RecordingNotes.recent(ctx) }
         addMessage(
             ChatMessage(
                 false,
@@ -270,6 +273,14 @@ object Assistant {
         worker.execute {
             try {
                 var announced = false
+                // Rozmowa sprzed chwili jeszcze się przepisuje (zwykle tylko końcówka) – czekamy na nią,
+                // żeby Jarvis wiedział, o czym mówiono.
+                appContext?.let { c ->
+                    Transcriber.awaitFresh(c, FRESH_WAIT_MS) {
+                        announced = true
+                        handler.post { if (state.value == AssistantState.THINKING) speakAside("Chwileczkę, przepisuję rozmowę.") }
+                    }
+                }
                 val result = brain.handle(text) {
                     if (!announced) {
                         announced = true

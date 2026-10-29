@@ -163,11 +163,13 @@ class RecorderService : Service() {
                 RecorderState.activeFile.value = newFile
                 file = newFile
                 writer = WavWriter(newFile, sampleRate)
+                Transcriber.liveStart(this@RecorderService, newFile)
                 setStatus(RecorderStatus.RECORDING)
             }
 
             override fun write(frame: ShortArray) {
                 writer?.write(frame, frame.size)
+                Transcriber.liveWrite(frame)
             }
 
             override fun finishSegment(keep: Boolean) {
@@ -180,6 +182,7 @@ class RecorderService : Service() {
                     RecorderState.discarded.update { it + 1 }
                 }
                 file = null
+                Transcriber.liveFinish(keep)
                 if (running) setStatus(RecorderStatus.LISTENING)
                 RecorderState.recordingsChanged()
                 if (keep) Transcriber.onRecordingFinished(this@RecorderService)

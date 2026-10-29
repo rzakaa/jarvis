@@ -22,15 +22,21 @@ import java.io.File
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 /**
  * Zamiana nagrań na tekst w telefonie (NeMo FastConformer CTC, wielojęzyczny z polskim, int8, ~100 MB).
  * Audio nigdy nie opuszcza telefonu. Tekst zapisujemy obok nagrania: 14-03-21.wav → 14-03-21.txt.
  *
- * Model pobiera się sam na Wi-Fi; nagranie przepisujemy zaraz po zakończeniu (przy ładowaniu
- * albo od 40% baterii), zaległości co 10 min. Jest też przycisk „przepisz teraz”.
+ * Model pobiera się sam na Wi-Fi. Rozmowę przepisujemy na bieżąco, w trakcie nagrywania, kawałkami
+ * po ok. 25 s ([liveStart]/[liveWrite]/[liveFinish]) – po „Hey Jarvis” zostaje do przepisania tylko
+ * końcówka, więc Jarvis od razu zna treść rozmowy. Działa przy ładowaniu albo od 40% baterii;
+ * zaległości (od najnowszych) co 10 min. Jest też przycisk „przepisz teraz”.
  * Po każdym przepisanym nagraniu wołamy [onTranscribed] – tam powstaje skrót.
  */
 object Transcriber {
@@ -46,6 +52,9 @@ object Transcriber {
     private const val CHUNK_MIN_S = 18
     private const val CHUNK_MAX_S = 30
 
+    /** Nagranie skończone w ciągu ostatnich 10 min to „świeża” rozmowa – na nią Jarvis czeka. */
+    private const val FRESH_MS = 10 * 60_000L
+
     val status = MutableStateFlow(Status.NOT_DOWNLOADED)
     val progress = MutableStateFlow(0f)
     val error = MutableStateFlow<String?>(null)
@@ -59,7 +68,25 @@ object Transcriber {
 
     private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "jarvis-asr") }
     private val timer = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "jarvis-asr-timer").apply { isDaemon = true } }
+    /** Osobny wątek dla bieżącej rozmowy – nie czeka za zaległościami. */
+    private val liveWorker = Executors.newSingleThreadExecutor { r -> Thread(r, "jarvis-asr-live") }
+    /** Model jest jeden; uczciwa blokada – bieżąca rozmowa czeka najwyżej na jeden kawałek zaległości. */
+    private val engineLock = ReentrantLock(true)
     private var recognizer: OfflineRecognizer? = null
+
+    /** Nagranie przepisywane na bieżąco (bufor wypełnia wątek nagrywania). */
+    private class LiveSession(val context: Context, val wav: File) {
+        val buffer = ShortArray((CHUNK_MAX_S + 1) * Recordings.SAMPLE_RATE)
+        var size = 0
+        val parts = mutableListOf<String>()
+        @Volatile var cancelled = false
+    }
+
+    private var live: LiveSession? = null
+    /** Nagrania, które przepisuje [liveWorker] – zaległości ich nie ruszają. */
+    private val liveFiles = ConcurrentHashMap.newKeySet<File>()
+    private val liveJobs = AtomicInteger(0)
+    private val liveDone = Object()
 
     @Volatile
     private var queued = false
@@ -185,9 +212,112 @@ object Transcriber {
         }
     }
 
-    /** Nagrania bez tekstu, od najstarszego; pomijamy to, które właśnie się nagrywa. */
+    /** Nagrania bez tekstu, od najnowszego (o nie pyta się najczęściej); pomijamy to, które się nagrywa. */
     private fun waiting(context: Context): List<File> =
-        Recordings.list(context).map { it.file }.filter { !transcriptOf(it).exists() }.reversed()
+        Recordings.list(context).map { it.file }.filter { !transcriptOf(it).exists() && it !in liveFiles }
+
+    /** Rejestrator zaczął nagranie – przepisujemy je w trakcie (jeśli jest model i bateria pozwala). */
+    fun liveStart(context: Context, wav: File) {
+        live = null
+        val ctx = context.applicationContext
+        if (!isDownloaded(ctx) || !batteryAllows(ctx)) return
+        liveFiles += wav
+        live = LiveSession(ctx, wav)
+    }
+
+    /** Kolejna ramka nagrania (wątek nagrywania – tylko kopiujemy, praca idzie w tle). */
+    fun liveWrite(frame: ShortArray) {
+        val s = live ?: return
+        val n = frame.size.coerceAtMost(s.buffer.size - s.size)
+        System.arraycopy(frame, 0, s.buffer, s.size, n)
+        s.size += n
+        if (s.size < CHUNK_MAX_S * Recordings.SAMPLE_RATE) return
+        val cut = cutPoint(s.buffer, s.size, 0, Recordings.SAMPLE_RATE)
+        val chunk = s.buffer.copyOf(cut)
+        System.arraycopy(s.buffer, cut, s.buffer, 0, s.size - cut)
+        s.size -= cut
+        submitLive(s, chunk)
+    }
+
+    /** Nagranie się skończyło: przepisujemy końcówkę i zapisujemy tekst ([keep] = false – nagranie usunięte). */
+    fun liveFinish(keep: Boolean) {
+        val s = live ?: return
+        live = null
+        if (!keep) {
+            s.cancelled = true
+            liveFiles -= s.wav
+            return
+        }
+        submitLive(s, s.buffer.copyOf(s.size))
+        liveJobs.incrementAndGet()
+        liveWorker.execute {
+            try {
+                val text = s.parts.joinToString(" ")
+                transcriptOf(s.wav).writeText(text)
+                Log.d(TAG, "${s.wav.name}: przepisane na bieżąco, ${text.length} znaków")
+                liveFiles -= s.wav
+                updatePending(s.context)
+                RecorderState.recordingsChanged()
+                if (text.isNotBlank()) runCatching { onTranscribed?.invoke(s.context, s.wav, text) }
+                    .onFailure { Log.w(TAG, "skrót nie wyszedł", it) }
+            } catch (e: Throwable) {
+                Log.w(TAG, "zapis tekstu nie wyszedł", e)
+                liveFiles -= s.wav
+            } finally {
+                liveDone()
+            }
+        }
+    }
+
+    private fun submitLive(s: LiveSession, chunk: ShortArray) {
+        liveJobs.incrementAndGet()
+        liveWorker.execute {
+            try {
+                if (!s.cancelled && chunk.isNotEmpty()) {
+                    val started = System.currentTimeMillis()
+                    decode(s.context, chunk)?.let { s.parts += it }
+                    Log.d(TAG, "${s.wav.name}: kawałek ${chunk.size / Recordings.SAMPLE_RATE} s w ${System.currentTimeMillis() - started} ms")
+                }
+            } catch (e: Throwable) {
+                Log.w(TAG, "błąd przepisywania na bieżąco", e)
+            } finally {
+                liveDone()
+            }
+        }
+    }
+
+    private fun liveDone() {
+        liveJobs.decrementAndGet()
+        synchronized(liveDone) { liveDone.notifyAll() }
+    }
+
+    /**
+     * Czeka (najwyżej [timeoutMs]), aż świeże rozmowy będą przepisane – żeby Jarvis odpowiadał
+     * o rozmowie sprzed chwili. Wraca od razu, gdy nic nie czeka. Blokuje – nie z wątku UI.
+     */
+    fun awaitFresh(context: Context, timeoutMs: Long, onWaiting: () -> Unit = {}): Boolean {
+        val ctx = context.applicationContext
+        if (!isDownloaded(ctx)) return true
+        val started = System.currentTimeMillis()
+        var announced = false
+        fun freshMissing() = Recordings.list(ctx).take(3).any {
+            !transcriptOf(it.file).exists() && System.currentTimeMillis() - it.file.lastModified() < FRESH_MS
+        }
+        while (System.currentTimeMillis() - started < timeoutMs) {
+            if (liveJobs.get() == 0) {
+                if (!freshMissing()) return true
+                // Nagranie bez bieżącego przepisywania (np. słaba bateria) – pytanie jest ważniejsze.
+                if (!queued) runPending(ctx)
+            }
+            // Dłuższe czekanie – Jarvis mówi „chwileczkę”, żeby nie było ciszy.
+            if (!announced && System.currentTimeMillis() - started > 1500) {
+                announced = true
+                onWaiting()
+            }
+            synchronized(liveDone) { liveDone.wait(200) }
+        }
+        return false
+    }
 
     private fun updatePending(context: Context) {
         pending.value = runCatching { waiting(context).size }.getOrDefault(0)
@@ -213,27 +343,32 @@ object Transcriber {
     private fun transcribe(context: Context, wav: File): String {
         val samples = readWav(wav)
         val rate = Recordings.SAMPLE_RATE
-        val rec = engine(context)
         val parts = mutableListOf<String>()
         var start = 0
         while (start < samples.size) {
-            val end = cutPoint(samples, start, rate)
-            val stream = rec.createStream()
-            try {
-                stream.acceptWaveform(FloatArray(end - start) { samples[start + it] / 32768f }, rate)
-                rec.decode(stream)
-                rec.getResult(stream).text.trim().takeIf { it.isNotEmpty() }?.let { parts += it }
-            } finally {
-                stream.release()
-            }
+            val end = cutPoint(samples, samples.size, start, rate)
+            decode(context, samples.copyOfRange(start, end))?.let { parts += it }
             start = end
         }
         return parts.joinToString(" ")
     }
 
+    /** Jeden kawałek (do 30 s) na tekst; null – nic nie rozpoznano. */
+    private fun decode(context: Context, samples: ShortArray): String? = engineLock.withLock {
+        val rec = engine(context)
+        val stream = rec.createStream()
+        try {
+            stream.acceptWaveform(FloatArray(samples.size) { samples[it] / 32768f }, Recordings.SAMPLE_RATE)
+            rec.decode(stream)
+            rec.getResult(stream).text.trim().takeIf { it.isNotEmpty() }
+        } finally {
+            stream.release()
+        }
+    }
+
     /** Koniec kawałka: najcichsze 100 ms między [CHUNK_MIN_S] a [CHUNK_MAX_S] – żeby nie ciąć w pół słowa. */
-    private fun cutPoint(samples: ShortArray, start: Int, rate: Int): Int {
-        if (samples.size - start <= CHUNK_MAX_S * rate) return samples.size
+    private fun cutPoint(samples: ShortArray, size: Int, start: Int, rate: Int): Int {
+        if (size - start <= CHUNK_MAX_S * rate) return size
         val window = rate / 10
         var best = start + CHUNK_MAX_S * rate
         var bestEnergy = Long.MAX_VALUE
