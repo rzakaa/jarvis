@@ -31,6 +31,13 @@ class WakeWord(context: Context, val threshold: Float) : Closeable {
         return false
     }
 
+    /** Po wznowieniu nasłuchu: czyste bufory i jeszcze ok. 1 s bez wykrywania (cichnie echo głosu Jarvisa). */
+    fun reset() {
+        detector.reset()
+        lastScore = 0f
+        lastDetection = System.currentTimeMillis() - 1000
+    }
+
     override fun close() = detector.close()
 
     private companion object {

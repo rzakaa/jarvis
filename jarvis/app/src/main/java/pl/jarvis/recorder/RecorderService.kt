@@ -191,6 +191,8 @@ class RecorderService : Service() {
                     record.startRecording()
                     setStatus(RecorderStatus.LISTENING)
                     zeroFrames = 0
+                    wakeWord?.reset()
+                    wakePeak = 0f
                     continue
                 }
                 var captured = 0

@@ -28,17 +28,29 @@ class OpenWakeWord(melModel: ByteArray, embeddingModel: ByteArray, wakeModel: By
     private var hasContext = false
     private var predictions = 0
 
+    /** Embeddingi 4 s losowego szumu – stan początkowy bufora cech (jak w oryginale). */
+    private val initialFeatures: List<FloatArray>
+
     init {
-        repeat(MEL_WINDOW) { melBuffer.addLast(FloatArray(MEL_BINS) { 1f }) }
-        // Jak w oryginale: bufor cech startuje z embeddingów 4 s losowego szumu.
         val random = Random(0)
         val noise = FloatArray(16_000 * 4) { random.nextInt(-1000, 1000).toFloat() }
         val frames = melspectrogram(noise)
-        var i = 0
-        while (i + MEL_WINDOW <= frames.size) {
-            features.addLast(embed(frames.subList(i, i + MEL_WINDOW)))
-            i += 8
-        }
+        initialFeatures = (0..frames.size - MEL_WINDOW step 8).map { embed(frames.subList(it, it + MEL_WINDOW)) }
+        reset()
+    }
+
+    /**
+     * Czyści bufory – po pauzie (rozmowa z Jarvisem) zostałoby w nich „Hey Jarvis” sprzed rozmowy
+     * i detektor odpaliłby drugi raz zaraz po wznowieniu.
+     */
+    fun reset() {
+        melBuffer.clear()
+        repeat(MEL_WINDOW) { melBuffer.addLast(FloatArray(MEL_BINS) { 1f }) }
+        features.clear()
+        features.addAll(initialFeatures)
+        chunkFilled = 0
+        hasContext = false
+        predictions = 0
     }
 
     /** Przyjmuje dowolną liczbę próbek 16 kHz; zwraca najwyższy wynik z policzonych kawałków (albo 0). */
