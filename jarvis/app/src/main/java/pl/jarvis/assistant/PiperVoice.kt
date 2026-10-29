@@ -34,6 +34,7 @@ object PiperVoice {
     private val worker = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
     private var tts: OfflineTts? = null
+    private var appContext: Context? = null
 
     /** Numer bieżącej wypowiedzi – nowa wypowiedź albo stop() unieważnia poprzednią. */
     @Volatile
@@ -47,15 +48,43 @@ object PiperVoice {
     private fun isDownloaded(context: Context) =
         File(dir(context), MODEL).exists() && File(dir(context), "tokens.txt").exists()
 
-    /** Przy starcie aplikacji: wczytuje głos, jeśli jest już pobrany. */
+    /**
+     * Znaczniki „w trakcie”: jeśli biblioteka głosu wywróci aplikację (błąd natywny, którego nie da się
+     * złapać), znacznik zostaje na dysku i przy następnym starcie nie próbujemy znowu – Jarvis mówi
+     * wtedy głosem systemowym, a aplikacja się otwiera.
+     */
+    private fun marker(context: Context, name: String) = File(context.filesDir, "voices/$name.marker")
+
+    /** Przy starcie aplikacji: wczytuje głos, jeśli jest już pobrany (i wcześniej nie wywrócił aplikacji). */
     fun prepare(context: Context) {
         val ctx = context.applicationContext
+        appContext = ctx
         if (tts != null || status.value == Status.LOADING || status.value == Status.DOWNLOADING) return
-        if (isDownloaded(ctx)) worker.execute { load(ctx) } else status.value = Status.NOT_DOWNLOADED
+        val crashed = listOf("loading", "speaking").firstOrNull { marker(ctx, it).exists() }
+        when {
+            crashed != null -> {
+                error.value = if (crashed == "loading") "wczytanie głosu zamknęło aplikację" else "mówienie głosem zamknęło aplikację"
+                status.value = Status.ERROR
+            }
+            isDownloaded(ctx) -> worker.execute { load(ctx) }
+            else -> status.value = Status.NOT_DOWNLOADED
+        }
     }
+
+    /** Ponowna próba po awarii (przycisk w ustawieniach). */
+    fun retry(context: Context) {
+        val ctx = context.applicationContext
+        marker(ctx, "loading").delete()
+        marker(ctx, "speaking").delete()
+        error.value = null
+        if (isDownloaded(ctx)) worker.execute { load(ctx) } else download(ctx)
+    }
+
+    fun canRetry(context: Context) = isDownloaded(context.applicationContext)
 
     fun download(context: Context) {
         val ctx = context.applicationContext
+        appContext = ctx
         if (status.value == Status.DOWNLOADING) return
         status.value = Status.DOWNLOADING
         progress.value = 0f
@@ -73,6 +102,7 @@ object PiperVoice {
 
     private fun load(context: Context) {
         status.value = Status.LOADING
+        val loading = marker(context, "loading").apply { parentFile?.mkdirs(); createNewFile() }
         try {
             val d = dir(context).path
             tts = OfflineTts(
@@ -96,6 +126,8 @@ object PiperVoice {
         } catch (e: Throwable) {
             error.value = e.message ?: e.javaClass.simpleName
             status.value = Status.ERROR
+        } finally {
+            loading.delete()
         }
     }
 
@@ -128,6 +160,7 @@ object PiperVoice {
                 .build()
             track = out
             var written = 0L
+            val speaking = appContext?.let { marker(it, "speaking") }?.apply { createNewFile() }
             try {
                 out.play()
                 engine.generateWithCallback(forSpeech(text), 0, 1.0f) { samples ->
@@ -144,6 +177,7 @@ object PiperVoice {
             } catch (_: Exception) {
                 // Błąd odtwarzania – po prostu kończymy wypowiedź.
             } finally {
+                speaking?.delete()
                 runCatching { out.stop() }
                 out.release()
                 track = null

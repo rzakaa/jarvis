@@ -66,7 +66,7 @@ fun SettingsScreen() {
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item { HudLabel("opcje · wersja 0.11", color = Hud.Cyan, size = 13.sp) }
+        item { HudLabel("opcje · wersja 0.12", color = Hud.Cyan, size = 13.sp) }
 
         item {
             HudPanel(modifier = Modifier.fillMaxWidth(), title = "sztuczna inteligencja") {
@@ -235,8 +235,15 @@ private fun VoicePanel() {
             HudChip("Piper · bass-high", piper, onClick = { piper = true; Prefs.setPiperVoice(context, true) })
             HudChip("Systemowy", !piper, onClick = { piper = false; Prefs.setPiperVoice(context, false) })
         }
-        if (status == PiperVoice.Status.NOT_DOWNLOADED || status == PiperVoice.Status.ERROR) {
+        if (status == PiperVoice.Status.NOT_DOWNLOADED) {
             HudButton("pobierz głos", onClick = { PiperVoice.download(context) }, filled = true)
+        }
+        if (status == PiperVoice.Status.ERROR) {
+            HudButton(
+                if (PiperVoice.canRetry(context)) "spróbuj ponownie" else "pobierz głos",
+                onClick = { PiperVoice.retry(context) },
+                filled = true,
+            )
         }
         Hint("Głos działa w telefonie bez internetu. Pobierz raz przez Wi-Fi; do tego czasu Jarvis mówi głosem systemowym.")
     }
