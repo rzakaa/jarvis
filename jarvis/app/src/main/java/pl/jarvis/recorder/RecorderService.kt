@@ -182,7 +182,7 @@ class RecorderService : Service() {
             while (running) {
                 if (RecorderState.micPaused.value) {
                     // Rozmowa z Jarvisem: kończymy bieżące nagranie i oddajemy mikrofon.
-                    segmenter.close()
+                    segmenter.closeForAssistant()
                     record.stop()
                     RecorderState.levelDb.value = SILENCE_DB
                     setStatus(RecorderStatus.PAUSED)

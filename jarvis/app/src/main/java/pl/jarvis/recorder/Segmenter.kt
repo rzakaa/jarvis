@@ -17,7 +17,8 @@ class Segmenter(
     private val endSilenceFrames: Int = 60 * 33,
     private val keptPauseFrames: Int = 2 * 33,
     private val resumeLeadFrames: Int = 15,
-    private val minSpeechFrames: Int = 16,
+    private val minSpeechFrames: Int = 33,
+    private val minSpeechFramesOnPause: Int = 5 * 33,
     private val maxSegmentFrames: Int = 30 * 60 * 33,
 ) {
     interface Sink {
@@ -74,6 +75,14 @@ class Segmenter(
         if (isRecording) finish()
     }
 
+    /**
+     * Kończy nagranie, bo mikrofon przejmuje rozmowa z Jarvisem. Krótkie nagranie to zwykle
+     * samo „Hey Jarvis” – zostaje tylko, gdy było w nim co najmniej [minSpeechFramesOnPause] mowy.
+     */
+    fun closeForAssistant() {
+        if (isRecording) finish(minSpeechFramesOnPause)
+    }
+
     private fun start() {
         isRecording = true
         speechFrames = recent.count { it }
@@ -90,10 +99,10 @@ class Segmenter(
         writtenFrames++
     }
 
-    private fun finish() {
+    private fun finish(minSpeech: Int = minSpeechFrames) {
         isRecording = false
         recent.fill(false)
         skipped.clear()
-        sink.finishSegment(keep = speechFrames >= minSpeechFrames)
+        sink.finishSegment(keep = speechFrames >= minSpeech)
     }
 }
