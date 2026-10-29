@@ -61,7 +61,7 @@ fun JarvisScreen() {
     val listState = rememberLazyListState()
 
     val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) Assistant.startListening()
+        if (granted) Assistant.toggleListening()
     }
     val onReactorTap: () -> Unit = {
         if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
