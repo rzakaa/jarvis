@@ -66,7 +66,7 @@ fun SettingsScreen() {
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item { HudLabel("opcje · wersja 0.19", color = Hud.Cyan, size = 13.sp) }
+        item { HudLabel("opcje · wersja 0.20", color = Hud.Cyan, size = 13.sp) }
 
         item {
             HudPanel(modifier = Modifier.fillMaxWidth(), title = "sztuczna inteligencja") {
@@ -198,21 +198,22 @@ fun SettingsScreen() {
     }
 }
 
-/** Głos Jarvisa: Piper pl_PL-bass-high (pobierany raz) albo głos systemowy. */
+/** Głos Jarvisa: jeden z głosów Piper (każdy pobierany raz) albo głos systemowy. */
 @Composable
 private fun VoicePanel() {
     val context = LocalContext.current
     val status by PiperVoice.status.collectAsState()
     val progress by PiperVoice.progress.collectAsState()
     val error by PiperVoice.error.collectAsState()
+    val voice by PiperVoice.voice.collectAsState()
     var piper by remember { mutableStateOf(Prefs.piperVoice(context)) }
     HudPanel(modifier = Modifier.fillMaxWidth(), title = "głos jarvisa") {
         HudLabel(
             when (status) {
-                PiperVoice.Status.NOT_DOWNLOADED -> "piper bass-high: nie pobrany (ok. 115 mb)"
-                PiperVoice.Status.DOWNLOADING -> "pobieram… ${(progress * 100).toInt()}%"
+                PiperVoice.Status.NOT_DOWNLOADED -> "${voice.label}: nie pobrany (ok. ${voice.sizeMb} mb)"
+                PiperVoice.Status.DOWNLOADING -> "pobieram ${voice.label}… ${(progress * 100).toInt()}%"
                 PiperVoice.Status.LOADING -> "wczytuję głos…"
-                PiperVoice.Status.READY -> "piper bass-high: gotowy"
+                PiperVoice.Status.READY -> "${voice.label}: gotowy"
                 PiperVoice.Status.ERROR -> "błąd: ${error ?: "?"}"
             },
             color = when (status) {
@@ -232,11 +233,25 @@ private fun VoicePanel() {
             )
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 8.dp)) {
-            HudChip("Piper · bass-high", piper, onClick = { piper = true; Prefs.setPiperVoice(context, true) })
+            HudChip("Piper", piper, onClick = { piper = true; Prefs.setPiperVoice(context, true) })
             HudChip("Systemowy", !piper, onClick = { piper = false; Prefs.setPiperVoice(context, false) })
+        }
+        if (piper) {
+            // Głosy po trzy w rzędzie; „✓” = już pobrany.
+            PiperVoice.Voice.entries.chunked(3).forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 8.dp)) {
+                    row.forEach { v ->
+                        val mark = if (PiperVoice.isDownloaded(context, v)) " ✓" else ""
+                        HudChip(v.label + mark, v == voice, onClick = { PiperVoice.select(context, v) })
+                    }
+                }
+            }
         }
         if (status == PiperVoice.Status.NOT_DOWNLOADED) {
             HudButton("pobierz głos", onClick = { PiperVoice.download(context) }, filled = true)
+        }
+        if (status == PiperVoice.Status.READY) {
+            HudButton("posłuchaj", onClick = { PiperVoice.speak("Dzień dobry. Tu Jarvis, do usług.") {} })
         }
         if (status == PiperVoice.Status.ERROR) {
             HudButton(
@@ -245,7 +260,7 @@ private fun VoicePanel() {
                 filled = true,
             )
         }
-        Hint("Głos działa w telefonie bez internetu. Pobierz raz przez Wi-Fi; do tego czasu Jarvis mówi głosem systemowym.")
+        Hint("Głos działa w telefonie bez internetu. Każdy głos pobierz raz przez Wi-Fi; do tego czasu Jarvis mówi głosem systemowym. Głosy „medium” są szybsze od „bass”.")
     }
 }
 

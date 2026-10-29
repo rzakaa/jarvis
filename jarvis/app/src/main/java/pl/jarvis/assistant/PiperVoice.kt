@@ -11,19 +11,38 @@ import com.k2fsa.sherpa.onnx.OfflineTtsConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig
 import kotlinx.coroutines.flow.MutableStateFlow
+import pl.jarvis.recorder.Prefs
 import java.io.File
 import java.util.concurrent.Executors
 
 /**
- * Głos Jarvisa: Piper pl_PL-bass-high (sherpa-onnx), działa w telefonie bez internetu.
- * Model (~130 MB) pobiera się raz, na żądanie z ustawień.
+ * Głos Jarvisa: polskie głosy Piper (sherpa-onnx), działają w telefonie bez internetu.
+ * Każdy model pobiera się raz, na żądanie z ustawień.
  */
 object PiperVoice {
     enum class Status { NOT_DOWNLOADED, DOWNLOADING, LOADING, READY, ERROR }
 
-    private const val VOICE = "vits-piper-pl_PL-bass-high"
-    private const val URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/$VOICE.tar.bz2"
-    private const val MODEL = "pl_PL-bass-high.onnx"
+    /** Polskie głosy z wydania sherpa-onnx „tts-models”. Medium są 2–3× szybsze od high. */
+    enum class Voice(val id: String, val label: String, val sizeMb: Int) {
+        JARVIS("jarvis_wg_glos-medium", "jarvis", 64),
+        DARKMAN("darkman-medium", "darkman", 64),
+        MESKI("meski_wg_glos-medium", "męski", 64),
+        MC_SPEECH("mc_speech-medium", "mc speech", 64),
+        BASS("bass-high", "bass (wolny)", 110),
+        GOSIA("gosia-medium", "gosia ♀", 64),
+        ZENSKI("zenski_wg_glos-medium", "żeński ♀", 64);
+
+        val dirName get() = "vits-piper-pl_PL-$id"
+        val url get() = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/$dirName.tar.bz2"
+
+        companion object {
+            val DEFAULT = JARVIS
+            fun byId(id: String?) = entries.firstOrNull { it.id == id } ?: DEFAULT
+        }
+    }
+
+    /** Wybrany głos (z ustawień). */
+    val voice = MutableStateFlow(Voice.DEFAULT)
 
     val status = MutableStateFlow(Status.NOT_DOWNLOADED)
     val progress = MutableStateFlow(0f)
@@ -43,10 +62,30 @@ object PiperVoice {
     @Volatile
     private var track: AudioTrack? = null
 
-    private fun dir(context: Context) = File(context.filesDir, "voices/$VOICE")
+    private fun dir(context: Context, v: Voice = voice.value) = File(context.filesDir, "voices/${v.dirName}")
 
-    private fun isDownloaded(context: Context) =
-        File(dir(context), MODEL).exists() && File(dir(context), "tokens.txt").exists()
+    /** Plik modelu w paczce (np. pl_PL-darkman-medium.onnx) – szukamy go, zamiast zgadywać nazwę. */
+    private fun modelFile(context: Context, v: Voice = voice.value) =
+        dir(context, v).listFiles()?.firstOrNull { it.isFile && it.name.endsWith(".onnx") }
+
+    fun isDownloaded(context: Context, v: Voice = voice.value) =
+        modelFile(context, v) != null && File(dir(context, v), "tokens.txt").exists()
+
+    /** Zmiana głosu z ustawień: zwalnia bieżący i wczytuje nowy (jeśli jest pobrany). */
+    fun select(context: Context, v: Voice) {
+        val ctx = context.applicationContext
+        if (v == voice.value && tts != null) return
+        if (status.value == Status.DOWNLOADING || status.value == Status.LOADING) return
+        stop()
+        voice.value = v
+        Prefs.setPiperVoiceId(ctx, v.id)
+        worker.execute {
+            tts?.release()
+            tts = null
+            error.value = null
+            if (isDownloaded(ctx, v)) load(ctx) else status.value = Status.NOT_DOWNLOADED
+        }
+    }
 
     /**
      * Znaczniki „w trakcie”: jeśli biblioteka głosu wywróci aplikację (błąd natywny, którego nie da się
@@ -67,6 +106,7 @@ object PiperVoice {
         val ctx = context.applicationContext
         appContext = ctx
         if (tts != null || status.value == Status.LOADING || status.value == Status.DOWNLOADING) return
+        voice.value = Voice.byId(Prefs.piperVoiceId(ctx))
         val crashed = listOf("loading", "speaking").firstOrNull { crashedHere(marker(ctx, it)) }
         when {
             crashed != null -> {
@@ -98,7 +138,8 @@ object PiperVoice {
         error.value = null
         worker.execute {
             try {
-                VoiceDownloader.downloadAndExtract(URL, dir(ctx)) { progress.value = it }
+                val v = voice.value
+                VoiceDownloader.downloadAndExtract(v.url, dir(ctx, v)) { progress.value = it }
                 load(ctx)
             } catch (e: Exception) {
                 error.value = e.message
@@ -112,16 +153,18 @@ object PiperVoice {
         val loading = setMarker(marker(context, "loading"))
         try {
             val d = dir(context).path
+            val model = modelFile(context) ?: throw IllegalStateException("brak pliku modelu")
             tts = OfflineTts(
                 config = OfflineTtsConfig(
                     model = OfflineTtsModelConfig(
                         vits = OfflineTtsVitsModelConfig(
-                            model = "$d/$MODEL",
+                            model = model.path,
                             tokens = "$d/tokens.txt",
                             dataDir = "$d/espeak-ng-data",
                             lengthScale = 1.0f,
                         ),
-                        numThreads = 2,
+                        // Słabsze telefony (np. Cat S61) mają 8 słabych rdzeni – więcej wątków = szybszy głos.
+                        numThreads = Runtime.getRuntime().availableProcessors().coerceIn(1, 4),
                         debug = false,
                         provider = "cpu",
                     ),

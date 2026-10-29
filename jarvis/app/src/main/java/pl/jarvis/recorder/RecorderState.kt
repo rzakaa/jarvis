@@ -73,6 +73,7 @@ object Prefs {
     private const val KIMI_BASE_URL = "kimi_base_url"
     private const val KIMI_MODEL = "kimi_model"
     private const val PIPER_VOICE = "piper_voice"
+    private const val PIPER_VOICE_ID = "piper_voice_id"
 
     private fun prefs(context: Context) =
         context.getSharedPreferences("jarvis", Context.MODE_PRIVATE)
@@ -149,10 +150,15 @@ object Prefs {
         wakeWord = wakeWordEnabled(context),
     )
 
-    /** true = głos Piper bass-high (gdy pobrany), false = głos systemowy. */
+    /** true = głos Piper (gdy pobrany), false = głos systemowy. */
     fun piperVoice(context: Context) = prefs(context).getBoolean(PIPER_VOICE, true)
 
     fun setPiperVoice(context: Context, value: Boolean) = prefs(context).edit().putBoolean(PIPER_VOICE, value).apply()
+
+    /** Który głos Piper (np. „jarvis_wg_glos-medium”); null = domyślny. */
+    fun piperVoiceId(context: Context): String? = prefs(context).getString(PIPER_VOICE_ID, null)
+
+    fun setPiperVoiceId(context: Context, id: String) = prefs(context).edit().putString(PIPER_VOICE_ID, id).apply()
 
     const val DEFAULT_KIMI_BASE_URL = "https://api.moonshot.ai/v1"
 }

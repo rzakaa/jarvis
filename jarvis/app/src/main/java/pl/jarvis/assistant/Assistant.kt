@@ -74,6 +74,12 @@ object Assistant {
     /** Bieżące słuchanie jest dopytaniem po odpowiedzi – cisza kończy rozmowę bez komunikatu. */
     private var followUp = false
 
+    /** Jarvis mówi odzew na „Hey Jarvis” – po nim zaczyna słuchać polecenia. */
+    private var greeting = false
+
+    /** Krótkie odzewy na „Hey Jarvis”. */
+    private val GREETINGS = listOf("Słucham?", "Tak?", "Do usług.", "Słucham, szefie.")
+
     /** Ile razy po cichu ponowiliśmy słuchanie po „Hey Jarvis”, gdy nic nie usłyszało. */
     private var retries = 0
 
@@ -145,7 +151,9 @@ object Assistant {
     fun onWakeWord() {
         if (state.value != AssistantState.IDLE) return
         conversation = true
-        startListening(isFollowUp = false, delayMs = MIC_HANDOVER_MS)
+        // Jarvis się odzywa („Słucham?”), a dopiero potem słucha polecenia.
+        greeting = true
+        say(GREETINGS.random(), show = false)
     }
 
     /** Dotknięcie reaktora: start rozmowy albo jej zakończenie. */
@@ -159,6 +167,7 @@ object Assistant {
                 tts?.stop()
                 PiperVoice.stop()
                 conversation = false
+                greeting = false
                 setState(AssistantState.IDLE)
             }
             else -> {
@@ -172,6 +181,7 @@ object Assistant {
     fun submitText(text: String) {
         if (text.isBlank()) return
         conversation = false
+        greeting = false
         recognizer?.cancel()
         tts?.stop()
         PiperVoice.stop()
@@ -257,8 +267,8 @@ object Assistant {
         say(text, source)
     }
 
-    private fun say(text: String, source: String? = null) {
-        addMessage(ChatMessage(false, text, source))
+    private fun say(text: String, source: String? = null, show: Boolean = true) {
+        if (show) addMessage(ChatMessage(false, text, source))
         val wait = (UNMUTE_DELAY_MS + 50 - (System.currentTimeMillis() - listeningEndedAt)).coerceAtLeast(0)
         val ctx = appContext
         if (ctx != null && Prefs.piperVoice(ctx) && PiperVoice.isReady) {
@@ -283,7 +293,15 @@ object Assistant {
     }
 
     private fun afterSpeaking() {
-        if (state.value == AssistantState.LISTENING || state.value == AssistantState.IDLE) return
+        if (state.value == AssistantState.LISTENING) return
+        if (greeting) {
+            // Po „Słucham?” (albo od razu, gdy nie ma głosu) – pierwsze słuchanie,
+            // z cichymi ponowieniami jak po samym „Hey Jarvis”.
+            greeting = false
+            startListening(isFollowUp = false)
+            return
+        }
+        if (state.value == AssistantState.IDLE) return
         if (conversation) startListening(isFollowUp = true) else setState(AssistantState.IDLE)
     }
 
