@@ -27,7 +27,7 @@ class OpenAiCompatibleBrain(
     private val history = mutableListOf<ObjectNode>()
     private var lastActivity: LocalDateTime? = null
 
-    override fun handle(userText: String): AiBrain.Result {
+    override fun handle(userText: String, onSearching: () -> Unit): AiBrain.Result {
         val now = tools.now()
         if (tools.shouldReset(lastActivity, now, history.size)) history.clear()
         lastActivity = now
@@ -49,7 +49,8 @@ class OpenAiCompatibleBrain(
                         val name = function.path("name").asText()
                         if (name.startsWith("$")) {
                             // Wbudowane narzędzie Kimi (np. $web_search) – serwer robi wszystko sam,
-                            // my tylko odsyłamy jego argumenty bez zmian.
+                            // my tylko odsyłamy jego argumenty bez zmian. Szukanie trwa kilkanaście sekund.
+                            if (name == "\$web_search") onSearching()
                             history += MAPPER.createObjectNode()
                                 .put("role", "tool")
                                 .put("tool_call_id", call.path("id").asText())
@@ -99,8 +100,10 @@ class OpenAiCompatibleBrain(
                 ),
             )
         }
-        // Kimi (Moonshot) ma wbudowane wyszukiwanie w internecie.
+        // Kimi (Moonshot) ma wbudowane wyszukiwanie w internecie. „Myślenie” wyłączamy:
+        // w rozmowie głosowej odpowiedź jest 2–3× szybsza, a jakość prostych odpowiedzi ta sama.
         if (base.contains("moonshot")) {
+            body.set<ObjectNode>("thinking", MAPPER.createObjectNode().put("type", "disabled"))
             toolArray.add(
                 MAPPER.createObjectNode().put("type", "builtin_function")
                     .set<ObjectNode>("function", MAPPER.createObjectNode().put("name", "\$web_search")),

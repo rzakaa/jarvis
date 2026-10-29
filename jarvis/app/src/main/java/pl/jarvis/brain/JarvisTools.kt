@@ -10,8 +10,11 @@ import kotlin.math.roundToLong
 interface AiBrain {
     data class Result(val text: String, val changed: Boolean)
 
-    /** Wysyła wypowiedź do modelu i wykonuje jego narzędzia. Blokuje – wołać poza wątkiem UI. */
-    fun handle(userText: String): Result
+    /**
+     * Wysyła wypowiedź do modelu i wykonuje jego narzędzia. Blokuje – wołać poza wątkiem UI.
+     * [onSearching] – model zaczął szukać w internecie (to potrwa), można o tym powiedzieć.
+     */
+    fun handle(userText: String, onSearching: () -> Unit = {}): Result
 }
 
 /**

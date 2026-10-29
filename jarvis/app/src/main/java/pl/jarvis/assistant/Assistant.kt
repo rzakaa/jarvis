@@ -251,7 +251,13 @@ object Assistant {
         val name = aiName
         worker.execute {
             try {
-                val result = brain.handle(text)
+                var announced = false
+                val result = brain.handle(text) {
+                    if (!announced) {
+                        announced = true
+                        handler.post { if (state.value == AssistantState.THINKING) speakAside("Chwileczkę, sprawdzam.") }
+                    }
+                }
                 handler.post { onReply(result.text, result.changed, false, name) }
             } catch (e: Exception) {
                 // Bez internetu albo błąd API – radzimy sobie lokalnymi komendami.
@@ -295,6 +301,16 @@ object Assistant {
         }
     }
 
+    /** Krótki komunikat w trakcie myślenia („sprawdzam”) – nie zmienia stanu rozmowy. */
+    private fun speakAside(text: String) {
+        val ctx = appContext ?: return
+        if (Prefs.piperVoice(ctx) && PiperVoice.isReady) {
+            PiperVoice.speak(text) {}
+        } else if (ttsReady) {
+            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "jarvis-aside-${utteranceCounter++}")
+        }
+    }
+
     private fun afterSpeaking() {
         if (state.value == AssistantState.LISTENING) return
         if (greeting) {
@@ -304,7 +320,8 @@ object Assistant {
             startListening(isFollowUp = false)
             return
         }
-        if (state.value == AssistantState.IDLE) return
+        // Koniec komunikatu w trakcie myślenia (speakAside) – czekamy dalej na odpowiedź.
+        if (state.value != AssistantState.SPEAKING) return
         if (conversation) startListening(isFollowUp = true) else setState(AssistantState.IDLE)
     }
 

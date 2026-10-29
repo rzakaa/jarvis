@@ -40,7 +40,7 @@ class ClaudeBrain(
     private val history = mutableListOf<MessageParam>()
     private var lastActivity: LocalDateTime? = null
 
-    override fun handle(userText: String): AiBrain.Result {
+    override fun handle(userText: String, onSearching: () -> Unit): AiBrain.Result {
         val now = tools.now()
         if (tools.shouldReset(lastActivity, now, history.size)) history.clear()
         lastActivity = now
