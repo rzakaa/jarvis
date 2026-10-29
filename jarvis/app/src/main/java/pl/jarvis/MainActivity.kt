@@ -31,8 +31,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        // Jeśli system zatrzymał nasłuchiwanie, a użytkownik go nie wyłączał – wznawiamy.
-        if (Prefs.wantsRecording(this) &&
+        // Po otwarciu aplikacji Jarvis od razu nasłuchuje (i czeka na słowo „Jarvis”).
+        if ((Prefs.wantsRecording(this) || Prefs.wakeWordEnabled(this)) &&
             RecorderState.status.value == RecorderStatus.STOPPED &&
             hasMicPermission(this)
         ) {

@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.sp
 import pl.jarvis.assistant.Assistant
 import pl.jarvis.assistant.AssistantState
 import pl.jarvis.assistant.ChatMessage
+import pl.jarvis.recorder.Prefs
 import pl.jarvis.recorder.RecorderState
 import pl.jarvis.recorder.RecorderStatus
 
@@ -119,6 +120,22 @@ fun JarvisScreen() {
                 color = if (recorderStatus == RecorderStatus.RECORDING) Hud.Amber else Hud.CyanDim,
             )
         }
+
+        val wakeEnabled = remember(wakeStatus, recorderStatus) { Prefs.wakeWordEnabled(context) }
+        HudLabel(
+            when {
+                !wakeEnabled -> "słowo „jarvis”: wyłączone w opcjach"
+                wakeStatus == "aktywne" -> "nasłuch „jarvis”: aktywny"
+                recorderStatus == RecorderStatus.STOPPED -> "nasłuch wyłączony – włącz w zakładce nagrania"
+                wakeStatus == "brak klucza Picovoice" -> "słowo „jarvis”: wpisz klucz picovoice w opcjach"
+                wakeStatus != null -> "słowo „jarvis”: $wakeStatus"
+                else -> "uruchamiam nasłuch…"
+            },
+            color = if (wakeStatus == "aktywne") Hud.Green else Hud.Amber,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 4.dp),
+        )
 
         Box(
             modifier = Modifier

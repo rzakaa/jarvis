@@ -2,8 +2,6 @@ package pl.jarvis.assistant
 
 import android.content.Context
 import android.content.Intent
-import android.media.AudioManager
-import android.media.ToneGenerator
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -73,6 +71,10 @@ object Assistant {
     /** Bieżące słuchanie jest dopytaniem po odpowiedzi – cisza kończy rozmowę bez komunikatu. */
     private var followUp = false
 
+    private var listeningEndedAt = 0L
+    private const val CHIME_MS = 450L
+    private const val UNMUTE_DELAY_MS = 350L
+
     fun init(context: Context) {
         if (appContext != null) return
         val ctx = context.applicationContext
@@ -124,9 +126,9 @@ object Assistant {
     /** Wywoływane przez rejestrator, gdy usłyszy słowo „Jarvis”. */
     fun onWakeWord() {
         if (state.value != AssistantState.IDLE) return
-        beep()
+        Sounds.playChime()
         conversation = true
-        startListening(isFollowUp = false)
+        startListening(isFollowUp = false, delayMs = CHIME_MS)
     }
 
     /** Dotknięcie reaktora: start rozmowy albo jej zakończenie. */
@@ -142,8 +144,9 @@ object Assistant {
                 setState(AssistantState.IDLE)
             }
             else -> {
+                Sounds.playChime()
                 conversation = true
-                startListening(isFollowUp = false)
+                startListening(isFollowUp = false, delayMs = CHIME_MS)
             }
         }
     }
@@ -166,7 +169,7 @@ object Assistant {
         dataChanged()
     }
 
-    private fun startListening(isFollowUp: Boolean) {
+    private fun startListening(isFollowUp: Boolean, delayMs: Long = 300) {
         val ctx = appContext ?: return
         if (!SpeechRecognizer.isRecognitionAvailable(ctx)) {
             conversation = false
@@ -186,8 +189,14 @@ object Assistant {
             .putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
         partial.value = ""
         setState(AssistantState.LISTENING)
-        // Chwila dla rejestratora na oddanie mikrofonu (i na wybrzmienie sygnału).
-        handler.postDelayed({ if (state.value == AssistantState.LISTENING) r.startListening(intent) }, 300)
+        // Chwila dla rejestratora na oddanie mikrofonu (i na wybrzmienie naszego sygnału).
+        handler.postDelayed({
+            if (state.value == AssistantState.LISTENING) {
+                // Systemowe rozpoznawanie mowy piszczy przy starcie i końcu – wyciszamy to.
+                Sounds.muteSystemBeeps(ctx)
+                r.startListening(intent)
+            }
+        }, delayMs)
     }
 
     private fun handleText(text: String) {
@@ -226,7 +235,12 @@ object Assistant {
         val engine = tts
         if (engine != null && ttsReady) {
             setState(AssistantState.SPEAKING)
-            engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, "jarvis-${utteranceCounter++}")
+            // Mówimy dopiero po przywróceniu dźwięku wyciszonego na czas słuchania.
+            val wait = (UNMUTE_DELAY_MS + 50 - (System.currentTimeMillis() - listeningEndedAt)).coerceAtLeast(0)
+            val id = "jarvis-${utteranceCounter++}"
+            handler.postDelayed({
+                if (state.value == AssistantState.SPEAKING) engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, id)
+            }, wait)
         } else {
             afterSpeaking()
         }
@@ -244,14 +258,6 @@ object Assistant {
         setState(AssistantState.IDLE)
     }
 
-    private fun beep() {
-        runCatching {
-            val tone = ToneGenerator(AudioManager.STREAM_MUSIC, 60)
-            tone.startTone(ToneGenerator.TONE_PROP_ACK, 150)
-            handler.postDelayed({ tone.release() }, 400)
-        }
-    }
-
     private fun dataChanged() {
         appContext?.let { LedgerStore.save(it, ledger) }
         ledgerVersion.update { it + 1 }
@@ -262,7 +268,15 @@ object Assistant {
     }
 
     private fun setState(newState: AssistantState) {
+        val wasListening = state.value == AssistantState.LISTENING
         state.value = newState
+        if (wasListening && newState != AssistantState.LISTENING) {
+            // Końcowe piknięcie systemu gra tuż po zakończeniu słuchania – dźwięk wraca chwilę później.
+            listeningEndedAt = System.currentTimeMillis()
+            handler.postDelayed({
+                if (state.value != AssistantState.LISTENING) appContext?.let { Sounds.unmuteSystemBeeps(it) }
+            }, UNMUTE_DELAY_MS)
+        }
         if (newState != AssistantState.LISTENING) voiceLevel.value = 0f
         // Rejestrator nie nagrywa rozmowy z Jarvisem ani jego głosu.
         RecorderState.micPaused.value = newState != AssistantState.IDLE
