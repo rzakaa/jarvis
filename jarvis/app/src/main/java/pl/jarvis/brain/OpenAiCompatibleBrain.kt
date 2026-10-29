@@ -46,10 +46,21 @@ class OpenAiCompatibleBrain(
                     for (call in calls) {
                         val function = call.path("function")
                         val arguments = function.path("arguments").asText("{}").ifBlank { "{}" }
+                        val name = function.path("name").asText()
+                        if (name.startsWith("$")) {
+                            // Wbudowane narzędzie Kimi (np. $web_search) – serwer robi wszystko sam,
+                            // my tylko odsyłamy jego argumenty bez zmian.
+                            history += MAPPER.createObjectNode()
+                                .put("role", "tool")
+                                .put("tool_call_id", call.path("id").asText())
+                                .put("name", name)
+                                .put("content", arguments)
+                            continue
+                        }
                         @Suppress("UNCHECKED_CAST")
                         val input = runCatching { MAPPER.readValue(arguments, Map::class.java) as Map<String, Any?> }
                             .getOrDefault(emptyMap())
-                        val (output, didChange) = tools.run(function.path("name").asText(), input)
+                        val (output, didChange) = tools.run(name, input)
                         if (didChange) changed = true
                         history += MAPPER.createObjectNode()
                             .put("role", "tool")
@@ -86,6 +97,13 @@ class OpenAiCompatibleBrain(
                         ),
                     ),
                 ),
+            )
+        }
+        // Kimi (Moonshot) ma wbudowane wyszukiwanie w internecie.
+        if (base.contains("moonshot")) {
+            toolArray.add(
+                MAPPER.createObjectNode().put("type", "builtin_function")
+                    .set<ObjectNode>("function", MAPPER.createObjectNode().put("name", "\$web_search")),
             )
         }
         return body

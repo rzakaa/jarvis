@@ -22,6 +22,8 @@ import pl.jarvis.recorder.AiProvider
 import pl.jarvis.recorder.AssistantSettings
 import pl.jarvis.recorder.Prefs
 import pl.jarvis.recorder.RecorderState
+import java.io.File
+import java.time.LocalDateTime
 import java.util.Locale
 import java.util.concurrent.Executors
 
@@ -320,6 +322,19 @@ object Assistant {
 
     private fun addMessage(message: ChatMessage) {
         messages.update { (it + message).takeLast(100) }
+        logTranscript(message)
+    }
+
+    /** Dziennik rozmów z Jarvisem: files/rozmowy/RRRR-MM-DD.txt (tylko w telefonie). */
+    private fun logTranscript(message: ChatMessage) {
+        val ctx = appContext ?: return
+        runCatching {
+            val now = LocalDateTime.now()
+            val dir = File(ctx.filesDir, "rozmowy").apply { mkdirs() }
+            val who = if (message.fromUser) "Ty" else "Jarvis" + (message.source?.let { " ($it)" } ?: "")
+            File(dir, "${now.toLocalDate()}.txt")
+                .appendText("${"%02d:%02d".format(now.hour, now.minute)} $who: ${message.text}\n")
+        }
     }
 
     private fun setState(newState: AssistantState) {

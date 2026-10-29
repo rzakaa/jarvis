@@ -8,7 +8,7 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.YearMonth
 
-/** Zapisuje zarobki, płatności i notatki w prywatnym pliku aplikacji (tylko na telefonie). */
+/** Zapisuje zarobki, płatności, notatki i pamięć w prywatnym pliku aplikacji (tylko na telefonie). */
 object LedgerStore {
     private fun file(context: Context) = File(context.filesDir, "jarvis_dane.json")
 
@@ -36,6 +36,9 @@ object LedgerStore {
                     it.optBoolean("done", false),
                 )
             }
+            root.optJSONArray("memories")?.forEachObject {
+                ledger.memories += Memory(it.getLong("id"), LocalDateTime.parse(it.getString("created")), it.getString("text"))
+            }
         }
         return ledger
     }
@@ -52,6 +55,9 @@ object LedgerStore {
             }))
             .put("notes", JSONArray(ledger.notes.map {
                 JSONObject().put("id", it.id).put("created", it.created.toString()).put("text", it.text).put("done", it.done)
+            }))
+            .put("memories", JSONArray(ledger.memories.map {
+                JSONObject().put("id", it.id).put("created", it.created.toString()).put("text", it.text)
             }))
         // Najpierw do pliku tymczasowego – przerwany zapis nie zniszczy danych.
         val target = file(context)

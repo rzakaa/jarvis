@@ -10,15 +10,26 @@ data class Payment(val id: Long, val date: LocalDate, val kind: String, val mont
 
 data class Note(val id: Long, val created: LocalDateTime, val text: String, val done: Boolean = false)
 
+/** Coś, co Jarvis zapamiętał o użytkowniku (osoby, praca, preferencje, ustalenia). */
+data class Memory(val id: Long, val created: LocalDateTime, val text: String)
+
 /**
- * Twarde dane Jarvisa: zarobki, płatności i notatki. Zapis na dysk robi warstwa Androida.
+ * Twarde dane Jarvisa: zarobki, płatności, notatki i pamięć. Zapis na dysk robi warstwa Androida.
  * Metody są synchronizowane – AI zapisuje dane w tle, a ekran czyta je jednocześnie.
  */
 class Ledger {
     val incomes = mutableListOf<Income>()
     val payments = mutableListOf<Payment>()
     val notes = mutableListOf<Note>()
+    val memories = mutableListOf<Memory>()
     var nextId = 1L
+
+    @Synchronized
+    fun addMemory(created: LocalDateTime, text: String) =
+        Memory(nextId++, created, text).also { memories += it }
+
+    @Synchronized
+    fun allMemories() = memories.toList()
 
     @Synchronized
     fun addIncome(date: LocalDate, grosze: Long, place: String) =
@@ -43,7 +54,8 @@ class Ledger {
 
     @Synchronized
     fun remove(id: Long): Boolean =
-        incomes.removeIf { it.id == id } || payments.removeIf { it.id == id } || notes.removeIf { it.id == id }
+        incomes.removeIf { it.id == id } || payments.removeIf { it.id == id } || notes.removeIf { it.id == id } ||
+            memories.removeIf { it.id == id }
 
     @Synchronized
     fun incomesIn(month: YearMonth) = incomes.filter { YearMonth.from(it.date) == month }

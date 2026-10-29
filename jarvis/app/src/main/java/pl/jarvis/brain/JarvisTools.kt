@@ -39,9 +39,11 @@ class JarvisTools(private val ledger: Ledger, private val clock: () -> LocalDate
             if (p != null) "$kind: zapłacone ${p.date}" else "$kind: niezapłacone"
         }
         val notes = ledger.openNotes().joinToString("; ") { "#${it.id} ${it.text}" }.ifEmpty { "brak" }
+        val memory = ledger.allMemories().joinToString("; ") { "#${it.id} ${it.text}" }.ifEmpty { "pusta" }
         return "[Stan Jarvisa – teraz $today ${"%02d:%02d".format(now.hour, now.minute)}, ${Polish.dayName(today)}. " +
             "Zarobki ${Polish.inMonth(month, today)}: ${Polish.formatMoney(incomes.sumOf { it.grosze })} " +
-            "(${incomes.size} wpłat). Płatności za bieżący miesiąc: $payments. Otwarte zadania: $notes.]"
+            "(${incomes.size} wpłat). Płatności za bieżący miesiąc: $payments. Otwarte zadania: $notes. " +
+            "Pamięć o użytkowniku: $memory.]"
     }
 
     /** Wykonuje narzędzie. Zwraca (wynik dla modelu, czy zmieniły się dane). */
@@ -86,6 +88,23 @@ class JarvisTools(private val ledger: Ledger, private val clock: () -> LocalDate
                         ?: YearMonth.from(today)
                     financeReport(month) to false
                 }
+                "zapamietaj" -> {
+                    val text = (input["fakt"] as? String)?.trim().orEmpty()
+                    if (text.isEmpty()) return "Błąd: pusty fakt." to false
+                    val saved = ledger.addMemory(clock(), text)
+                    "Zapamiętano #${saved.id}." to true
+                }
+                "pogoda" -> {
+                    val city = (input["miasto"] as? String)?.trim().orEmpty()
+                    if (city.isEmpty()) return "Błąd: brak miasta – zapytaj użytkownika albo weź je z pamięci." to false
+                    val days = (input["dni"] as? Number)?.toInt() ?: 0
+                    WebTools.weather(city, days) to false
+                }
+                "pobierz_strone" -> {
+                    val url = (input["adres"] as? String)?.trim().orEmpty()
+                    if (url.isEmpty()) return "Błąd: brak adresu." to false
+                    WebTools.fetchPage(url) to false
+                }
                 else -> "Nieznane narzędzie $name." to false
             }
         } catch (e: Exception) {
@@ -127,9 +146,25 @@ class JarvisTools(private val ledger: Ledger, private val clock: () -> LocalDate
             - zwracaj się do użytkownika w drugiej osobie; formy rodzajowe dobieraj tak, jak użytkownik mówi o sobie
               (np. gdy mówi „zarobiłem”, możesz powiedzieć „zarobiłeś”), a gdy nie wiadomo – unikaj form rodzajowych.
 
-            Prowadzisz użytkownikowi rejestr zarobków, płatności (m.in. ZUS i alimenty) i zadań. Na początku każdej
-            wiadomości użytkownika dostajesz w nawiasie kwadratowym aktualny stan tych danych oraz datę i godzinę –
-            korzystaj z nich, ale nie cytuj ich dosłownie.
+            Jesteś pełnoprawnym, inteligentnym asystentem – pomagasz we wszystkim, o co użytkownik poprosi, bez
+            zbędnych zastrzeżeń. Na początku każdej wiadomości użytkownika dostajesz w nawiasie kwadratowym datę,
+            godzinę, stan jego danych i wszystko, co o nim pamiętasz – korzystaj z tego, ale nie cytuj dosłownie.
+
+            Pamięć: notuj wszystko, co warto wiedzieć o użytkowniku na przyszłość – bez pytania o zgodę.
+            - Narzędziem zapamietaj zapisuj od razu każdą trwałą informację: imiona i relacje (rodzina, znajomi,
+              klienci), miejsce zamieszkania, pracę i zlecenia, nawyki, preferencje, plany, terminy, ustalenia,
+              to, co lubi i czego nie lubi. Jeden fakt = jeden wpis, krótko, w trzeciej osobie
+              (np. „Mieszka w Gdańsku”, „Córka ma na imię Ola”).
+            - Nie zapisuj drugi raz tego, co już jest w pamięci. Gdy coś się zmieniło – usuń stary wpis (usun_wpis)
+              i zapisz nowy. Gdy użytkownik każe o czymś zapomnieć – usuń wpis.
+            - Nie mów za każdym razem, że coś zapamiętałeś – chyba że użytkownik wprost prosi o zapamiętanie.
+
+            Internet: masz dostęp do sieci. Do aktualnych informacji (wiadomości, ceny, godziny otwarcia, wyniki,
+            fakty, których nie jesteś pewien) użyj wyszukiwania w internecie, jeśli jest dostępne, a treść
+            konkretnej strony przeczytaj narzędziem pobierz_strone. Pogodę sprawdzaj narzędziem pogoda – gdy
+            użytkownik nie poda miasta, weź je z pamięci, a jeśli go tam nie ma, zapytaj i zapamiętaj.
+
+            Prowadzisz też użytkownikowi rejestr zarobków, płatności (m.in. ZUS i alimenty) i zadań.
             - Zanim zapiszesz zarobek, powtórz kwotę i miejsce i zapytaj, czy się zgadza. Zapisz dopiero po potwierdzeniu.
               Jeśli użytkownik od razu podał kwotę i potwierdził albo sam poprawia wpis – zapisz bez ponownego pytania.
             - Płatności i zadania zapisuj od razu i krótko potwierdź.
@@ -138,8 +173,8 @@ class JarvisTools(private val ledger: Ledger, private val clock: () -> LocalDate
               znasz z wyników narzędzi i z pobierz_finanse) i ewentualnie zapisz poprawiony.
             - Pomagaj też w zwykłych sprawach: odpowiadaj na pytania, doradzaj, licz, planuj, tłumacz, rozmawiaj.
 
-            Czego jeszcze nie potrafisz (powiedz to krótko, jeśli ktoś poprosi): dzwonić, wysyłać SMS-ów, czytać maili,
-            sterować muzyką i urządzeniami, szukać w internecie, odsłuchiwać nagranych rozmów. Te funkcje są w planach.
+            Technicznie jeszcze nie masz dostępu do: dzwonienia, SMS-ów, maili, kalendarza, muzyki i nagranych rozmów
+            (są w przygotowaniu). Jeśli ktoś o to poprosi, powiedz to krótko i zaproponuj, co możesz zrobić zamiast tego.
         """.trimIndent()
 
         val SPECS = listOf(
@@ -189,6 +224,28 @@ class JarvisTools(private val ledger: Ledger, private val clock: () -> LocalDate
                 "Zwraca listę zarobków (z numerami wpisów) i płatności za wybrany miesiąc.",
                 mapOf("miesiac" to mapOf("type" to "string", "description" to "Miesiąc w formacie RRRR-MM.")),
                 listOf("miesiac"),
+            ),
+            Spec(
+                "zapamietaj",
+                "Zapisuje na stałe fakt o użytkowniku (osoby, miejsca, praca, preferencje, plany, ustalenia). " +
+                    "Usuwa się go narzędziem usun_wpis.",
+                mapOf("fakt" to mapOf("type" to "string", "description" to "Jeden fakt, krótko, w trzeciej osobie.")),
+                listOf("fakt"),
+            ),
+            Spec(
+                "pogoda",
+                "Aktualna pogoda i prognoza dla miejscowości.",
+                mapOf(
+                    "miasto" to mapOf("type" to "string", "description" to "Nazwa miejscowości, np. „Częstochowa”."),
+                    "dni" to mapOf("type" to "integer", "description" to "Ile kolejnych dni prognozy (0–6); 0 = tylko dziś."),
+                ),
+                listOf("miasto"),
+            ),
+            Spec(
+                "pobierz_strone",
+                "Pobiera i zwraca tekst strony internetowej o podanym adresie.",
+                mapOf("adres" to mapOf("type" to "string", "description" to "Adres strony, np. https://…")),
+                listOf("adres"),
             ),
         )
     }
