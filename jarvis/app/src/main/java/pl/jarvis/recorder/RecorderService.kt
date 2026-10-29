@@ -14,6 +14,7 @@ import android.content.pm.ServiceInfo
 import android.graphics.drawable.Icon
 import android.media.AudioFormat
 import android.media.AudioRecord
+import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -51,11 +52,16 @@ class RecorderService : Service() {
 
         createChannel()
         try {
-            startForeground(
-                NOTIFICATION_ID,
-                buildNotification(RecorderStatus.LISTENING),
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
-            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    buildNotification(RecorderStatus.LISTENING),
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
+                )
+            } else {
+                // Android 8–10 (np. Cat S61): typ usługi bierze się z manifestu.
+                startForeground(NOTIFICATION_ID, buildNotification(RecorderStatus.LISTENING))
+            }
         } catch (e: Exception) {
             // Android nie pozwala włączyć mikrofonu, gdy aplikacja jest w tle
             // (np. gdy system sam wznawia usługę). Prosimy użytkownika o otwarcie aplikacji.
