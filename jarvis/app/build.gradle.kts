@@ -65,4 +65,6 @@ dependencies {
     // Ta sama wersja co kompilator Kotlina (biblioteka Claude ciągnie starszą przez Jacksona).
     implementation("org.jetbrains.kotlin:kotlin-reflect:2.2.20")
     implementation("ai.picovoice:porcupine-android:4.0.2")
+    // Zapytania do API zgodnych z OpenAI (np. Kimi).
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }
