@@ -40,6 +40,10 @@ object RecorderState {
     /** Czy słowo „Jarvis” jest teraz wykrywane (null = wyłączone, tekst = błąd). */
     val wakeWordStatus = MutableStateFlow<String?>(null)
 
+    /** Najwyższy wynik „Hey Jarvis” z ostatnich ~2 s i próg wykrycia – podgląd na ekranie. */
+    val wakeScore = MutableStateFlow(0f)
+    val wakeThreshold = MutableStateFlow(0.5f)
+
     /** Z czym faktycznie otworzył się mikrofon, np. „48000 Hz · Mikrofon”. */
     val micInfo = MutableStateFlow<String?>(null)
     val error = MutableStateFlow<String?>(null)

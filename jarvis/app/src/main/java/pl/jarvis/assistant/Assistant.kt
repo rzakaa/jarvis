@@ -71,6 +71,9 @@ object Assistant {
     /** Bieżące słuchanie jest dopytaniem po odpowiedzi – cisza kończy rozmowę bez komunikatu. */
     private var followUp = false
 
+    /** Ile razy po cichu ponowiliśmy słuchanie po „Hey Jarvis”, gdy nic nie usłyszało. */
+    private var retries = 0
+
     private var listeningEndedAt = 0L
     private const val CHIME_MS = 450L
     private const val UNMUTE_DELAY_MS = 350L
@@ -169,7 +172,7 @@ object Assistant {
         dataChanged()
     }
 
-    private fun startListening(isFollowUp: Boolean, delayMs: Long = 300) {
+    private fun startListening(isFollowUp: Boolean, delayMs: Long = 300, isRetry: Boolean = false) {
         val ctx = appContext ?: return
         if (!SpeechRecognizer.isRecognitionAvailable(ctx)) {
             conversation = false
@@ -178,6 +181,7 @@ object Assistant {
         }
         tts?.stop()
         followUp = isFollowUp
+        if (!isRetry) retries = 0
         val r = recognizer ?: SpeechRecognizer.createSpeechRecognizer(ctx).also {
             it.setRecognitionListener(listener)
             recognizer = it
@@ -187,6 +191,10 @@ object Assistant {
             .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "pl-PL")
             .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             .putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+            // Dłużej czekamy na początek i koniec wypowiedzi (część usług to respektuje).
+            .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
+            .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L)
+            .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 2000L)
         partial.value = ""
         setState(AssistantState.LISTENING)
         // Chwila dla rejestratora na oddanie mikrofonu (i na wybrzmienie naszego sygnału).
@@ -304,6 +312,7 @@ object Assistant {
             val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
             partial.value = ""
             if (text.isBlank()) {
+                if (retryQuietly()) return
                 val wasFollowUp = followUp
                 endConversation()
                 if (!wasFollowUp) addMessage(ChatMessage(false, "Nic nie usłyszałem."))
@@ -315,6 +324,7 @@ object Assistant {
         override fun onError(error: Int) {
             // Spóźniony błąd po przerwaniu słuchania – nie psujemy bieżącego stanu.
             if (state.value != AssistantState.LISTENING) return
+            if ((error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) && retryQuietly()) return
             val wasFollowUp = followUp
             endConversation()
             val message = when (error) {
@@ -330,6 +340,18 @@ object Assistant {
             }
             addMessage(ChatMessage(false, message))
         }
+    }
+
+    /**
+     * Po „Hey Jarvis” rozpoznawanie czasem startuje za późno i nic nie łapie –
+     * wtedy raz, bez sygnału, słuchamy jeszcze raz.
+     */
+    private fun retryQuietly(): Boolean {
+        if (followUp || retries >= 1) return false
+        retries++
+        partial.value = ""
+        startListening(isFollowUp = false, delayMs = 100, isRetry = true)
+        return true
     }
 
     /** Zwroty kończące rozmowę – po odpowiedzi Jarvis przestaje słuchać. */

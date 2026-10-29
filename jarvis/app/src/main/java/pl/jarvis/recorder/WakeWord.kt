@@ -7,7 +7,7 @@ import java.io.Closeable
  * Wykrywa słowo „Hey Jarvis” (openWakeWord, działa na telefonie, bez konta i internetu).
  * Dostaje ten sam dźwięk 16 kHz, który nagrywa rejestrator, więc nie zajmuje mikrofonu osobno.
  */
-class WakeWord(context: Context, private val threshold: Float) : Closeable {
+class WakeWord(context: Context, val threshold: Float) : Closeable {
     private val detector = OpenWakeWord(
         asset(context, "melspectrogram.onnx"),
         asset(context, "embedding_model.onnx"),
@@ -15,9 +15,14 @@ class WakeWord(context: Context, private val threshold: Float) : Closeable {
     )
     private var lastDetection = 0L
 
+    /** Ostatni wynik detektora (0..1) – do podglądu na ekranie. */
+    var lastScore = 0f
+        private set
+
     /** Zwraca true, jeśli w tych próbkach padło „Hey Jarvis” (najwyżej raz na 2 s). */
     fun process(samples: ShortArray): Boolean {
         val score = detector.process(samples)
+        if (score > 0f || samples.size >= OpenWakeWord.CHUNK) lastScore = score
         val now = System.currentTimeMillis()
         if (score >= threshold && now - lastDetection > 2000) {
             lastDetection = now

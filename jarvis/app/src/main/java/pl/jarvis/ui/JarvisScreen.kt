@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -135,6 +136,7 @@ fun JarvisScreen() {
                 .fillMaxWidth()
                 .padding(top = 4.dp),
         )
+        if (wakeStatus == "aktywne") WakeMeter()
 
         Box(
             modifier = Modifier
@@ -199,6 +201,35 @@ fun JarvisScreen() {
                 ),
             )
             HudButton("›", onClick = send, modifier = Modifier.padding(start = 8.dp), filled = true)
+        }
+    }
+}
+
+/** Podgląd detektora „Hey Jarvis”: wynik na żywo i próg, od którego Jarvis reaguje. */
+@Composable
+private fun WakeMeter() {
+    val score by RecorderState.wakeScore.collectAsState()
+    val threshold by RecorderState.wakeThreshold.collectAsState()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        HudLabel("hey jarvis %.2f / próg %.2f".format(score, threshold), size = 10.sp, color = if (score >= threshold) Hud.Green else Hud.CyanDim)
+        Box(
+            modifier = Modifier
+                .padding(start = 8.dp)
+                .weight(1f)
+                .height(4.dp)
+                .background(Hud.CyanDim.copy(alpha = 0.3f)),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(score.coerceIn(0f, 1f))
+                    .height(4.dp)
+                    .background(if (score >= threshold) Hud.Green else Hud.Cyan),
+            )
         }
     }
 }

@@ -126,6 +126,8 @@ class RecorderService : Service() {
         currentLoop = token
         val vad = VoiceActivityDetector()
         val wakeWord = createWakeWord()
+        wakeWord?.let { RecorderState.wakeThreshold.value = it.threshold }
+        var wakePeak = 0f
         var frameCounter = 0
         val segmenter = Segmenter(object : Segmenter.Sink {
             private var writer: WavWriter? = null
@@ -184,7 +186,12 @@ class RecorderService : Service() {
 
                 val db = levelDb(frame, frame.size)
                 if (++frameCounter % 3 == 0) RecorderState.levelDb.value = db
-                if (wakeWord?.process(frame) == true) mainHandler.post { Assistant.onWakeWord() }
+                if (wakeWord != null) {
+                    if (wakeWord.process(frame)) mainHandler.post { Assistant.onWakeWord() }
+                    // Podgląd: szczyt wyniku, powoli opadający (żeby dało się go odczytać na ekranie).
+                    wakePeak = maxOf(wakeWord.lastScore, wakePeak * 0.985f)
+                    if (frameCounter % 3 == 0) RecorderState.wakeScore.value = wakePeak
+                }
                 segmenter.process(frame, vad.isSpeech(db, RecorderState.sensitivity.value))
             }
         } finally {
