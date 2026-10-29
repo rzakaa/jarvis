@@ -56,6 +56,7 @@ W zakładce **⚙ Opcje** wpisz:
 
 - **Klucz API Claude** – platform.claude.com → doładuj konto (np. 5 $) → API Keys → Create Key.
   Bez klucza Jarvis rozumie tylko proste komendy lokalne.
+- albo **Kimi** (od wersji 0.7): wybierz „Kimi”, wpisz klucz z platform.moonshot.ai, kliknij „Pobierz modele” i wybierz model.
 - **AccessKey Picovoice** – console.picovoice.ai → darmowe konto → AccessKey. Potrzebny do wykrywania słowa „Jarvis”.
 
 Słowo „Jarvis” działa, gdy w zakładce **Nagrania** jest włączone nasłuchiwanie. Po odpowiedzi Jarvis słucha dalej;

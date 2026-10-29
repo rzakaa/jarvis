@@ -1,6 +1,8 @@
 package pl.jarvis.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -15,53 +17,108 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import pl.jarvis.assistant.Assistant
+import pl.jarvis.brain.OpenAiCompatibleBrain
+import pl.jarvis.recorder.AiProvider
+import pl.jarvis.recorder.AssistantSettings
 import pl.jarvis.recorder.Prefs
 import pl.jarvis.recorder.RecorderService
 import pl.jarvis.recorder.RecorderState
 import pl.jarvis.recorder.RecorderStatus
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen() {
     val context = LocalContext.current
-    var claudeKey by remember { mutableStateOf(Prefs.claudeKey(context)) }
-    var picovoiceKey by remember { mutableStateOf(Prefs.picovoiceKey(context)) }
-    var wakeWord by remember { mutableStateOf(Prefs.wakeWordEnabled(context)) }
-    var smart by remember { mutableStateOf(Prefs.smartModel(context)) }
+    val scope = rememberCoroutineScope()
+    var settings by remember { mutableStateOf(Prefs.assistantSettings(context)) }
     var saved by remember { mutableStateOf(false) }
+    var models by remember { mutableStateOf<List<String>>(emptyList()) }
+    var modelsStatus by remember { mutableStateOf<String?>(null) }
     val aiEnabled by Assistant.aiEnabled.collectAsState()
     val wakeStatus by RecorderState.wakeWordStatus.collectAsState()
     val recorderStatus by RecorderState.status.collectAsState()
+
+    fun update(change: (AssistantSettings) -> AssistantSettings) {
+        settings = change(settings)
+        saved = false
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item { HudLabel("ustawienia · wersja 0.6", color = Hud.Cyan, size = 13.sp) }
+        item { HudLabel("opcje · wersja 0.7", color = Hud.Cyan, size = 13.sp) }
 
         item {
-            HudPanel(modifier = Modifier.fillMaxWidth(), title = "sztuczna inteligencja · claude") {
+            HudPanel(modifier = Modifier.fillMaxWidth(), title = "sztuczna inteligencja") {
                 HudLabel(if (aiEnabled) "status: aktywna" else "status: brak klucza", color = if (aiEnabled) Hud.Green else Hud.Amber)
-                KeyField("Klucz API Claude (sk-ant-…)", claudeKey) { claudeKey = it; saved = false }
-                HudLabel("model", modifier = Modifier.padding(top = 8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 6.dp)) {
-                    HudChip("Mądry · Sonnet", smart, onClick = { smart = true; saved = false })
-                    HudChip("Szybki · Haiku", !smart, onClick = { smart = false; saved = false })
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 8.dp)) {
+                    HudChip("Claude", settings.provider == AiProvider.CLAUDE, onClick = { update { it.copy(provider = AiProvider.CLAUDE) } })
+                    HudChip("Kimi", settings.provider == AiProvider.KIMI, onClick = { update { it.copy(provider = AiProvider.KIMI) } })
                 }
-                Text(
-                    "Klucz: platform.claude.com → API Keys → Create Key (najpierw doładuj konto, np. 5 \$). " +
-                        "Mądry model to ok. 5 gr za pytanie, szybki – ułamek grosza. Ustaw limit wydatków na koncie.",
-                    color = Hud.TextDim,
-                    fontSize = 12.sp,
-                )
+
+                if (settings.provider == AiProvider.CLAUDE) {
+                    KeyField("Klucz API Claude (sk-ant-…)", settings.claudeKey) { v -> update { it.copy(claudeKey = v) } }
+                    HudLabel("model", modifier = Modifier.padding(top = 8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 6.dp)) {
+                        HudChip("Mądry · Sonnet", settings.smart, onClick = { update { it.copy(smart = true) } })
+                        HudChip("Szybki · Haiku", !settings.smart, onClick = { update { it.copy(smart = false) } })
+                    }
+                    Hint(
+                        "Klucz: platform.claude.com → API Keys → Create Key (najpierw doładuj konto, np. 5 \$). " +
+                            "Mądry model to ok. 5 gr za pytanie, szybki – ułamek grosza. Ustaw limit wydatków na koncie.",
+                    )
+                } else {
+                    KeyField("Klucz API Kimi (sk-…)", settings.kimiKey) { v -> update { it.copy(kimiKey = v) } }
+                    KeyField("Adres API", settings.kimiBaseUrl, secret = false) { v -> update { it.copy(kimiBaseUrl = v) } }
+                    KeyField("Model (np. kimi-k2.6)", settings.kimiModel, secret = false) { v -> update { it.copy(kimiModel = v) } }
+                    HudButton(
+                        "pobierz modele",
+                        onClick = {
+                            modelsStatus = "pobieram…"
+                            val key = settings.kimiKey
+                            val base = settings.kimiBaseUrl
+                            scope.launch {
+                                val result = withContext(Dispatchers.IO) {
+                                    runCatching { OpenAiCompatibleBrain.listModels(key, base) }
+                                }
+                                result.onSuccess {
+                                    models = it
+                                    modelsStatus = if (it.isEmpty()) "brak modeli" else "wybierz model:"
+                                }.onFailure { e -> modelsStatus = "błąd: ${e.message?.take(120)}" }
+                            }
+                        },
+                        modifier = Modifier.padding(top = 10.dp),
+                    )
+                    modelsStatus?.let { HudLabel(it, modifier = Modifier.padding(top = 8.dp)) }
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.padding(top = 6.dp),
+                    ) {
+                        models.forEach { id ->
+                            HudChip(id, settings.kimiModel == id, onClick = { update { it.copy(kimiModel = id) } })
+                        }
+                    }
+                    Hint(
+                        "Klucz: platform.moonshot.ai → API Keys. Adres zostaw domyślny (${Prefs.DEFAULT_KIMI_BASE_URL}); " +
+                            "klucze z chińskiej platformy wymagają https://api.moonshot.cn/v1. Wpisz klucz, pobierz modele i wybierz jeden.",
+                    )
+                }
             }
         }
 
@@ -69,22 +126,20 @@ fun SettingsScreen() {
             HudPanel(modifier = Modifier.fillMaxWidth(), title = "słowo „jarvis”") {
                 HudLabel(
                     when {
-                        !wakeWord -> "status: wyłączone"
+                        !settings.wakeWord -> "status: wyłączone"
                         recorderStatus == RecorderStatus.STOPPED -> "status: włącz nasłuchiwanie w zakładce nagrania"
                         else -> "status: ${wakeStatus ?: "uruchamiam…"}"
                     },
                     color = if (wakeStatus == "aktywne") Hud.Green else Hud.Amber,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 6.dp)) {
-                    HudChip("Włączone", wakeWord, onClick = { wakeWord = true; saved = false })
-                    HudChip("Wyłączone", !wakeWord, onClick = { wakeWord = false; saved = false })
+                    HudChip("Włączone", settings.wakeWord, onClick = { update { it.copy(wakeWord = true) } })
+                    HudChip("Wyłączone", !settings.wakeWord, onClick = { update { it.copy(wakeWord = false) } })
                 }
-                KeyField("AccessKey Picovoice", picovoiceKey) { picovoiceKey = it; saved = false }
-                Text(
+                KeyField("AccessKey Picovoice", settings.picovoiceKey) { v -> update { it.copy(picovoiceKey = v) } }
+                Hint(
                     "Klucz za darmo: console.picovoice.ai → załóż konto → skopiuj AccessKey. " +
                         "Słowo „Jarvis” działa, gdy w zakładce Nagrania jest włączone nasłuchiwanie.",
-                    color = Hud.TextDim,
-                    fontSize = 12.sp,
                 )
             }
         }
@@ -93,7 +148,7 @@ fun SettingsScreen() {
             HudButton(
                 if (saved) "zapisano ✓" else "zapisz",
                 onClick = {
-                    Prefs.saveAssistantSettings(context, claudeKey, picovoiceKey, wakeWord, smart)
+                    Prefs.saveAssistantSettings(context, settings)
                     Assistant.reloadSettings()
                     // Słowo-klucz działa w rejestratorze – uruchamiamy go ponownie z nowymi ustawieniami.
                     if (RecorderState.status.value != RecorderStatus.STOPPED) RecorderService.restart(context)
@@ -104,18 +159,17 @@ fun SettingsScreen() {
             )
         }
 
-        item {
-            Text(
-                "Klucze są zapisane tylko w tym telefonie, w prywatnych danych aplikacji.",
-                color = Hud.TextDim,
-                fontSize = 12.sp,
-            )
-        }
+        item { Hint("Klucze są zapisane tylko w tym telefonie, w prywatnych danych aplikacji.") }
     }
 }
 
 @Composable
-private fun KeyField(label: String, value: String, onChange: (String) -> Unit) {
+private fun Hint(text: String) {
+    Text(text, color = Hud.TextDim, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+}
+
+@Composable
+private fun KeyField(label: String, value: String, secret: Boolean = true, onChange: (String) -> Unit) {
     OutlinedTextField(
         value = value,
         onValueChange = onChange,
@@ -124,7 +178,7 @@ private fun KeyField(label: String, value: String, onChange: (String) -> Unit) {
             .padding(top = 8.dp),
         label = { Text(label, fontSize = 12.sp) },
         singleLine = true,
-        visualTransformation = PasswordVisualTransformation(),
+        visualTransformation = if (secret) PasswordVisualTransformation() else VisualTransformation.None,
         shape = HudShape,
         textStyle = TextStyle(color = Hud.Text, fontFamily = Hud.Mono, fontSize = 13.sp),
         colors = OutlinedTextFieldDefaults.colors(

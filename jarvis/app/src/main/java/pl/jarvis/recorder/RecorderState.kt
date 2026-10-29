@@ -64,6 +64,10 @@ object Prefs {
     private const val PICOVOICE_KEY = "picovoice_key"
     private const val WAKE_WORD = "wake_word"
     private const val SMART_MODEL = "smart_model"
+    private const val PROVIDER = "ai_provider"
+    private const val KIMI_KEY = "kimi_key"
+    private const val KIMI_BASE_URL = "kimi_base_url"
+    private const val KIMI_MODEL = "kimi_model"
 
     private fun prefs(context: Context) =
         context.getSharedPreferences("jarvis", Context.MODE_PRIVATE)
@@ -101,11 +105,54 @@ object Prefs {
     /** true = mądrzejszy model (Sonnet), false = szybszy i tańszy (Haiku). */
     fun smartModel(context: Context) = prefs(context).getBoolean(SMART_MODEL, true)
 
-    fun saveAssistantSettings(context: Context, claudeKey: String, picovoiceKey: String, wakeWord: Boolean, smart: Boolean) =
+    /** Który dostawca AI: Claude albo Kimi (lub inne API zgodne z OpenAI). */
+    fun provider(context: Context): AiProvider {
+        val name = prefs(context).getString(PROVIDER, null) ?: return AiProvider.CLAUDE
+        return AiProvider.entries.firstOrNull { it.name == name } ?: AiProvider.CLAUDE
+    }
+
+    fun kimiKey(context: Context) = prefs(context).getString(KIMI_KEY, "").orEmpty()
+
+    fun kimiBaseUrl(context: Context) =
+        prefs(context).getString(KIMI_BASE_URL, null)?.takeIf { it.isNotBlank() } ?: DEFAULT_KIMI_BASE_URL
+
+    fun kimiModel(context: Context) = prefs(context).getString(KIMI_MODEL, "").orEmpty()
+
+    fun saveAssistantSettings(context: Context, settings: AssistantSettings) =
         prefs(context).edit()
-            .putString(CLAUDE_KEY, claudeKey.trim())
-            .putString(PICOVOICE_KEY, picovoiceKey.trim())
-            .putBoolean(WAKE_WORD, wakeWord)
-            .putBoolean(SMART_MODEL, smart)
+            .putString(PROVIDER, settings.provider.name)
+            .putString(CLAUDE_KEY, settings.claudeKey.trim())
+            .putBoolean(SMART_MODEL, settings.smart)
+            .putString(KIMI_KEY, settings.kimiKey.trim())
+            .putString(KIMI_BASE_URL, settings.kimiBaseUrl.trim())
+            .putString(KIMI_MODEL, settings.kimiModel.trim())
+            .putString(PICOVOICE_KEY, settings.picovoiceKey.trim())
+            .putBoolean(WAKE_WORD, settings.wakeWord)
             .apply()
+
+    fun assistantSettings(context: Context) = AssistantSettings(
+        provider = provider(context),
+        claudeKey = claudeKey(context),
+        smart = smartModel(context),
+        kimiKey = kimiKey(context),
+        kimiBaseUrl = kimiBaseUrl(context),
+        kimiModel = kimiModel(context),
+        picovoiceKey = picovoiceKey(context),
+        wakeWord = wakeWordEnabled(context),
+    )
+
+    const val DEFAULT_KIMI_BASE_URL = "https://api.moonshot.ai/v1"
 }
+
+enum class AiProvider { CLAUDE, KIMI }
+
+data class AssistantSettings(
+    val provider: AiProvider,
+    val claudeKey: String,
+    val smart: Boolean,
+    val kimiKey: String,
+    val kimiBaseUrl: String,
+    val kimiModel: String,
+    val picovoiceKey: String,
+    val wakeWord: Boolean,
+)

@@ -15,9 +15,12 @@ import android.speech.tts.UtteranceProgressListener
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import pl.jarvis.brain.Brain
+import pl.jarvis.brain.AiBrain
 import pl.jarvis.brain.ClaudeBrain
 import pl.jarvis.brain.Ledger
 import pl.jarvis.brain.LedgerStore
+import pl.jarvis.brain.OpenAiCompatibleBrain
+import pl.jarvis.recorder.AiProvider
 import pl.jarvis.recorder.Prefs
 import pl.jarvis.recorder.RecorderState
 import java.util.Locale
@@ -55,7 +58,7 @@ object Assistant {
         private set
 
     private lateinit var localBrain: Brain
-    private var claude: ClaudeBrain? = null
+    private var ai: AiBrain? = null
     private var appContext: Context? = null
     private var tts: TextToSpeech? = null
     private var ttsReady = false
@@ -80,8 +83,8 @@ object Assistant {
         addMessage(
             ChatMessage(
                 false,
-                if (claude != null) "Systemy gotowe. Powiedz „Jarvis” albo dotknij reaktora."
-                else "Systemy gotowe. Żebym był naprawdę inteligentny, wpisz klucz Claude w zakładce Ustawienia.",
+                if (ai != null) "Systemy gotowe. Powiedz „Jarvis” albo dotknij reaktora."
+                else "Systemy gotowe. Żebym był naprawdę inteligentny, wpisz klucz AI (Claude albo Kimi) w zakładce Opcje.",
             ),
         )
         tts = TextToSpeech(ctx) init@{ status ->
@@ -107,10 +110,15 @@ object Assistant {
     /** Wczytuje klucz i model z ustawień (po ich zmianie). */
     fun reloadSettings() {
         val ctx = appContext ?: return
-        val key = Prefs.claudeKey(ctx)
-        val model = if (Prefs.smartModel(ctx)) ClaudeBrain.MODEL_SMART else ClaudeBrain.MODEL_FAST
-        claude = if (key.isBlank()) null else ClaudeBrain(key, ledger, model)
-        aiEnabled.value = claude != null
+        val s = Prefs.assistantSettings(ctx)
+        ai = when (s.provider) {
+            AiProvider.CLAUDE -> s.claudeKey.takeIf { it.isNotBlank() }?.let {
+                ClaudeBrain(it, ledger, if (s.smart) ClaudeBrain.MODEL_SMART else ClaudeBrain.MODEL_FAST)
+            }
+            AiProvider.KIMI -> if (s.kimiKey.isBlank() || s.kimiModel.isBlank()) null
+            else OpenAiCompatibleBrain(s.kimiKey, s.kimiBaseUrl, s.kimiModel, ledger)
+        }
+        aiEnabled.value = ai != null
     }
 
     /** Wywoływane przez rejestrator, gdy usłyszy słowo „Jarvis”. */
@@ -186,15 +194,15 @@ object Assistant {
         addMessage(ChatMessage(true, text))
         if (END_PHRASES.containsMatchIn(text.lowercase())) conversation = false
         setState(AssistantState.THINKING)
-        val ai = claude
-        if (ai == null) {
+        val brain = ai
+        if (brain == null) {
             val reply = localBrain.handle(text)
             onReply(reply.text, reply.changed, reply.expectsAnswer)
             return
         }
         worker.execute {
             try {
-                val result = ai.handle(text)
+                val result = brain.handle(text)
                 handler.post { onReply(result.text, result.changed, false) }
             } catch (e: Exception) {
                 // Bez internetu albo błąd API – radzimy sobie lokalnymi komendami.
