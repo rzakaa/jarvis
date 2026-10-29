@@ -169,6 +169,21 @@ object Prefs {
 
     fun setPiperVoiceId(context: Context, id: String) = prefs(context).edit().putString(PIPER_VOICE_ID, id).apply()
 
+    /** Głos Microsoftu (Azure, te same co „Czytaj na głos” w Edge) zamiast Pipera; bez internetu – Piper. */
+    fun azureVoice(context: Context) = prefs(context).getBoolean("azure_voice", false)
+
+    fun setAzureVoice(context: Context, value: Boolean) = prefs(context).edit().putBoolean("azure_voice", value).apply()
+
+    fun azureKey(context: Context) = prefs(context).getString("azure_key", "").orEmpty()
+
+    fun azureRegion(context: Context) = prefs(context).getString("azure_region", "westeurope").orEmpty().ifBlank { "westeurope" }
+
+    fun azureVoiceName(context: Context) = prefs(context).getString("azure_voice_name", "pl-PL-MarekNeural").orEmpty()
+
+    fun saveAzure(context: Context, key: String, region: String, voiceName: String) = prefs(context).edit()
+        .putString("azure_key", key.trim()).putString("azure_region", region.trim().lowercase().replace(" ", ""))
+        .putString("azure_voice_name", voiceName).apply()
+
     const val DEFAULT_KIMI_BASE_URL = "https://api.moonshot.ai/v1"
 }
 

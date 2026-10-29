@@ -316,6 +316,7 @@ object Assistant {
             AssistantState.SPEAKING -> {
                 tts?.stop()
                 PiperVoice.stop()
+                CloudVoice.stop()
                 conversation = false
                 greeting = false
                 stopWaking()
@@ -336,6 +337,7 @@ object Assistant {
         recognizer?.cancel()
         tts?.stop()
         PiperVoice.stop()
+        CloudVoice.stop()
         handleText(text.trim())
     }
 
@@ -368,6 +370,7 @@ object Assistant {
         }
         tts?.stop()
         PiperVoice.stop()
+        CloudVoice.stop()
         followUp = isFollowUp
         if (!isRetry) retries = 0
         val r = recognizer ?: SpeechRecognizer.createSpeechRecognizer(ctx).also {
@@ -455,36 +458,54 @@ object Assistant {
         if (show) addMessage(ChatMessage(false, text, source))
         val wait = (UNMUTE_DELAY_MS + 50 - (System.currentTimeMillis() - listeningEndedAt)).coerceAtLeast(0)
         val ctx = appContext
+        val cloud = ctx != null && CloudVoice.isEnabled(ctx)
+        val piper = ctx != null && Prefs.piperVoice(ctx) && PiperVoice.isReady
+        if (!cloud && !piper && (tts == null || !ttsReady)) {
+            afterSpeaking()
+            return
+        }
+        setState(AssistantState.SPEAKING)
+        // Mówimy dopiero po przywróceniu dźwięku wyciszonego na czas słuchania.
+        handler.postDelayed({
+            if (state.value != AssistantState.SPEAKING) return@postDelayed
+            if (cloud && ctx != null) {
+                // Głos Microsoftu; bez internetu – Piper albo systemowy.
+                CloudVoice.speak(ctx, text, alarm, onDone = { afterSpeaking() }) {
+                    if (state.value == AssistantState.SPEAKING) speakLocally(text, alarm)
+                }
+            } else {
+                speakLocally(text, alarm)
+            }
+        }, wait)
+    }
+
+    /** Głos w telefonie: Piper, a bez niego – systemowy. Stan SPEAKING ustawia wołający. */
+    private fun speakLocally(text: String, alarm: Boolean) {
+        val ctx = appContext
         if (ctx != null && Prefs.piperVoice(ctx) && PiperVoice.isReady) {
-            // Głos Jarvisa: Piper pl_PL-bass-high.
-            setState(AssistantState.SPEAKING)
-            handler.postDelayed({
-                if (state.value == AssistantState.SPEAKING) PiperVoice.speak(text, alarm) { afterSpeaking() }
-            }, wait)
+            PiperVoice.speak(text, alarm) { afterSpeaking() }
             return
         }
         val engine = tts
-        if (engine != null && ttsReady) {
-            setState(AssistantState.SPEAKING)
-            // Mówimy dopiero po przywróceniu dźwięku wyciszonego na czas słuchania.
-            val id = "jarvis-${utteranceCounter++}"
-            handler.postDelayed({
-                val params = if (alarm) Bundle().apply { putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_ALARM) } else null
-                if (state.value == AssistantState.SPEAKING) engine.speak(text, TextToSpeech.QUEUE_FLUSH, params, id)
-            }, wait)
-        } else {
+        if (engine == null || !ttsReady) {
             afterSpeaking()
+            return
         }
+        val params = if (alarm) Bundle().apply { putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_ALARM) } else null
+        engine.speak(text, TextToSpeech.QUEUE_FLUSH, params, "jarvis-${utteranceCounter++}")
     }
 
     /** Krótki komunikat w trakcie myślenia („sprawdzam”) – nie zmienia stanu rozmowy. */
     private fun speakAside(text: String) {
         val ctx = appContext ?: return
-        if (Prefs.piperVoice(ctx) && PiperVoice.isReady) {
-            PiperVoice.speak(text) {}
-        } else if (ttsReady) {
-            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "jarvis-aside-${utteranceCounter++}")
+        val local = {
+            if (Prefs.piperVoice(ctx) && PiperVoice.isReady) {
+                PiperVoice.speak(text) {}
+            } else if (ttsReady) {
+                tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "jarvis-aside-${utteranceCounter++}")
+            }
         }
+        if (CloudVoice.isEnabled(ctx)) CloudVoice.speak(ctx, text, onDone = {}, fallback = { local() }) else local()
     }
 
     private fun afterSpeaking() {

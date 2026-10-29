@@ -31,6 +31,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import pl.jarvis.assistant.Assistant
+import pl.jarvis.assistant.CloudVoice
 import pl.jarvis.assistant.PiperVoice
 import pl.jarvis.brain.Ledger
 import pl.jarvis.brain.OpenAiCompatibleBrain
@@ -66,7 +67,7 @@ fun SettingsScreen() {
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item { HudLabel("opcje · wersja 0.32", color = Hud.Cyan, size = 13.sp) }
+        item { HudLabel("opcje · wersja 0.33", color = Hud.Cyan, size = 13.sp) }
 
         item {
             HudPanel(modifier = Modifier.fillMaxWidth(), title = "sztuczna inteligencja") {
@@ -207,7 +208,23 @@ private fun VoicePanel() {
     val error by PiperVoice.error.collectAsState()
     val voice by PiperVoice.voice.collectAsState()
     var piper by remember { mutableStateOf(Prefs.piperVoice(context)) }
+    var azure by remember { mutableStateOf(Prefs.azureVoice(context)) }
     HudPanel(modifier = Modifier.fillMaxWidth(), title = "głos jarvisa") {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 8.dp)) {
+            HudChip("Microsoft", azure, onClick = { azure = true; Prefs.setAzureVoice(context, true) })
+            HudChip("Piper", !azure && piper, onClick = {
+                azure = false; piper = true
+                Prefs.setAzureVoice(context, false); Prefs.setPiperVoice(context, true)
+            })
+            HudChip("Systemowy", !azure && !piper, onClick = {
+                azure = false; piper = false
+                Prefs.setAzureVoice(context, false); Prefs.setPiperVoice(context, false)
+            })
+        }
+        if (azure) {
+            AzurePanel()
+            Hint("Bez internetu (albo gdy Microsoft nie odpowie) Jarvis mówi głosem Piper poniżej.")
+        }
         HudLabel(
             when (status) {
                 PiperVoice.Status.NOT_DOWNLOADED -> "${voice.label}: nie pobrany (ok. ${voice.sizeMb} mb)"
@@ -232,11 +249,7 @@ private fun VoicePanel() {
                 trackColor = Hud.CyanDim.copy(alpha = 0.3f),
             )
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 8.dp)) {
-            HudChip("Piper", piper, onClick = { piper = true; Prefs.setPiperVoice(context, true) })
-            HudChip("Systemowy", !piper, onClick = { piper = false; Prefs.setPiperVoice(context, false) })
-        }
-        if (piper) {
+        if (piper || azure) {
             // Głosy po trzy w rzędzie; „✓” = już pobrany.
             PiperVoice.Voice.entries.chunked(3).forEach { row ->
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 8.dp)) {
@@ -262,6 +275,42 @@ private fun VoicePanel() {
         }
         Hint("Głos działa w telefonie bez internetu. Każdy głos pobierz raz przez Wi-Fi; do tego czasu Jarvis mówi głosem systemowym. Głosy „medium” są szybsze od „bass”.")
     }
+}
+
+/** Głos Microsoftu (Azure Speech): wybór głosu, klucz i region – zapisane tylko w telefonie. */
+@Composable
+private fun AzurePanel() {
+    val context = LocalContext.current
+    val error by CloudVoice.error.collectAsState()
+    var key by remember { mutableStateOf(Prefs.azureKey(context)) }
+    var region by remember { mutableStateOf(Prefs.azureRegion(context)) }
+    var voiceName by remember { mutableStateOf(Prefs.azureVoiceName(context)) }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        CloudVoice.Voice.entries.forEach { v ->
+            HudChip(v.label, v.id == voiceName, onClick = {
+                voiceName = v.id
+                Prefs.saveAzure(context, key, region, voiceName)
+            })
+        }
+    }
+    KeyField("Klucz Azure Speech", key) { key = it }
+    KeyField("Region (np. westeurope)", region, secret = false) { region = it }
+    HudLabel(
+        when {
+            key.isBlank() -> "brak klucza – mówi Piper"
+            error != null -> "błąd: $error"
+            else -> "gotowy"
+        },
+        color = if (key.isNotBlank() && error == null) Hud.Green else Hud.Amber,
+    )
+    HudButton("zapisz i posłuchaj", filled = true, onClick = {
+        Prefs.saveAzure(context, key, region, voiceName)
+        CloudVoice.speak(context, "Dzień dobry, szefie. Tu Jarvis, do usług.", onDone = {}, fallback = {})
+    })
+    Hint(
+        "Klucz: portal.azure.com → Utwórz zasób → „Speech” (Usługi mowy) → warstwa cenowa Free F0, region West Europe. " +
+            "Potem „Klucze i punkt końcowy” → Klucz 1. Za darmo 500 tys. znaków miesięcznie.",
+    )
 }
 
 @Composable
