@@ -87,7 +87,16 @@ class RecorderService : Service() {
             }
         Thread({
             try {
-                recordLoop()
+                while (true) {
+                    try {
+                        recordLoop()
+                        break
+                    } catch (e: SilentInputException) {
+                        // Ta częstotliwość daje same zera – otwieramy mikrofon w następnej.
+                        brokenRates += e.rate
+                        RecorderState.status.value = RecorderStatus.LISTENING
+                    }
+                }
             } catch (e: Exception) {
                 RecorderState.error.value = "Błąd nagrywania: ${e.message}"
                 // Pętla przerwała się sama (a nie przez „Wyłącz”) – zamykamy usługę.
@@ -130,6 +139,7 @@ class RecorderService : Service() {
         wakeWord?.let { RecorderState.wakeThreshold.value = it.threshold }
         var wakePeak = 0f
         var frameCounter = 0
+        var zeroFrames = 0
         val segmenter = Segmenter(object : Segmenter.Sink {
             private var writer: WavWriter? = null
             private var file: File? = null
@@ -174,6 +184,7 @@ class RecorderService : Service() {
                     if (!running) break
                     record.startRecording()
                     setStatus(RecorderStatus.LISTENING)
+                    zeroFrames = 0
                     continue
                 }
                 var captured = 0
@@ -181,6 +192,12 @@ class RecorderService : Service() {
                     val n = record.read(captureFrame, captured, captureFrame.size - captured)
                     if (n < 0) throw IllegalStateException("mikrofon zwrócił błąd $n")
                     captured += n
+                }
+                // Prawdziwy mikrofon nigdy nie daje idealnych zer. Emulator 37 w 48 kHz potrafi –
+                // wtedy (3 s samych zer) przechodzimy na inną częstotliwość.
+                zeroFrames = if (captureFrame.all { it == 0.toShort() }) zeroFrames + 1 else 0
+                if (zeroFrames >= ZERO_FRAMES_LIMIT && CAPTURE_RATES.any { it != captureRate && it !in brokenRates }) {
+                    throw SilentInputException(captureRate)
                 }
                 val frame = decimator.process(captureFrame, captured)
                 if (frame.isEmpty()) continue
@@ -227,6 +244,7 @@ class RecorderService : Service() {
     private fun openMicrophone(): Pair<AudioRecord, Int> {
         val source = RecorderState.micSource.value
         for (rate in CAPTURE_RATES) {
+            if (rate in brokenRates) continue
             val minBuffer = AudioRecord.getMinBufferSize(
                 rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
             )
@@ -314,6 +332,10 @@ class RecorderService : Service() {
         // Jedna ramka = 30 ms dźwięku przy 16 kHz.
         private const val FRAME_SAMPLES = 480
         private val CAPTURE_RATES = intArrayOf(48_000, Recordings.SAMPLE_RATE)
+        private const val ZERO_FRAMES_LIMIT = 100 // ok. 3 s przy ramkach 30 ms
+
+        /** Częstotliwości, w których mikrofon dawał same zera (do końca działania aplikacji). */
+        private val brokenRates = mutableSetOf<Int>()
 
         @Volatile
         private var currentLoop: Any? = null
@@ -335,3 +357,6 @@ class RecorderService : Service() {
         }
     }
 }
+
+/** Mikrofon w danej częstotliwości daje same zera (zepsuta ścieżka dźwięku, np. w emulatorze). */
+private class SilentInputException(val rate: Int) : Exception("cisza z mikrofonu w $rate Hz")
