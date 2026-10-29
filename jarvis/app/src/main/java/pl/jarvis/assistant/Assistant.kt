@@ -337,7 +337,10 @@ object Assistant {
 
         override fun onResults(results: Bundle?) {
             if (state.value != AssistantState.LISTENING) return
-            val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
+            // Rozpoznawanie w telefonie (SODA) potrafi oddać pusty wynik końcowy, choć wyniki
+            // częściowe miały tekst – wtedy bierzemy ostatni częściowy.
+            val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
+                ?.takeIf { it.isNotBlank() } ?: partial.value
             partial.value = ""
             if (text.isBlank()) {
                 if (retryQuietly()) return
@@ -352,6 +355,13 @@ object Assistant {
         override fun onError(error: Int) {
             // Spóźniony błąd po przerwaniu słuchania – nie psujemy bieżącego stanu.
             if (state.value != AssistantState.LISTENING) return
+            // „Brak mowy”, choć wyniki częściowe miały tekst – traktujemy go jak wynik.
+            val heard = partial.value
+            if (heard.isNotBlank() && (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT)) {
+                partial.value = ""
+                handleText(heard)
+                return
+            }
             when (error) {
                 SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> if (retryQuietly()) return
                 // Usługa się zacięła (często tuż po oddaniu mikrofonu) – nowa instancja zwykle działa.
