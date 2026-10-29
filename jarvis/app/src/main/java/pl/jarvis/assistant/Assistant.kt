@@ -98,6 +98,9 @@ object Assistant {
     private val wakeAgain = Runnable { wakeUp() }
     private var awake: PowerManager.WakeLock? = null
 
+    /** Głośność budzika sprzed pobudki – wraca po niej (null = nie zmienialiśmy). */
+    private var alarmVolumeBefore: Int? = null
+
     /** Ile razy budzimy, zanim damy spokój (co 2 min – razem ok. 12 min). */
     private const val MAX_WAKE_ATTEMPTS = 6
     private const val WAKE_REPEAT_MS = 2 * 60_000L
@@ -232,6 +235,7 @@ object Assistant {
             stopWaking()
             return
         }
+        raiseAlarmVolume(if (wakeAttempt == 1) 0.75f else 1f)
         val now = LocalDateTime.now()
         val reason = w.text.takeIf { it.isNotBlank() }?.let { ", powód / uwagi: $it" }.orEmpty()
         speakFromAi(
@@ -241,7 +245,25 @@ object Assistant {
         )
     }
 
+    /**
+     * Pobudka mówi kanałem budzika, a ten bywa ustawiony cicho – podkręcamy go na czas pobudki
+     * (pierwsza próba [fraction] = 75%, kolejne na cały regulator). Nigdy nie ściszamy.
+     */
+    private fun raiseAlarmVolume(fraction: Float) {
+        val audio = appContext?.getSystemService(AudioManager::class.java) ?: return
+        runCatching {
+            val current = audio.getStreamVolume(AudioManager.STREAM_ALARM)
+            if (alarmVolumeBefore == null) alarmVolumeBefore = current
+            val target = (audio.getStreamMaxVolume(AudioManager.STREAM_ALARM) * fraction).toInt()
+            if (target > current) audio.setStreamVolume(AudioManager.STREAM_ALARM, target, 0)
+        }
+    }
+
     private fun stopWaking() {
+        alarmVolumeBefore?.let { before ->
+            appContext?.getSystemService(AudioManager::class.java)?.let { runCatching { it.setStreamVolume(AudioManager.STREAM_ALARM, before, 0) } }
+        }
+        alarmVolumeBefore = null
         waking = null
         handler.removeCallbacks(wakeAgain)
         awake?.let { if (it.isHeld) it.release() }
