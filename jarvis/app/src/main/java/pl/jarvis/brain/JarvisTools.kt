@@ -3,6 +3,7 @@ package pl.jarvis.brain
 import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.LocalTime
 import java.time.YearMonth
 import kotlin.math.roundToLong
 
@@ -52,10 +53,14 @@ class JarvisTools(private val ledger: Ledger, private val clock: () -> LocalDate
         }
         val notes = ledger.openNotes().joinToString("; ") { "#${it.id} ${it.text}" }.ifEmpty { "brak" }
         val memory = ledger.allMemories().joinToString("; ") { "#${it.id} ${it.text}" }.ifEmpty { "pusta" }
+        val reminders = ledger.pendingReminders().joinToString("; ") {
+            "#${it.id} ${it.at.toLocalDate()} ${"%02d:%02d".format(it.at.hour, it.at.minute)} " +
+                (if (it.wake) "pobudka" else "przypomnienie") + (if (it.text.isNotBlank()) ": ${it.text}" else "")
+        }.ifEmpty { "brak" }
         return "[Stan Jarvisa – teraz $today ${"%02d:%02d".format(now.hour, now.minute)}, ${Polish.dayName(today)}. " +
             "Zarobki ${Polish.inMonth(month, today)}: ${Polish.formatMoney(incomes.sumOf { it.grosze })} " +
             "(${incomes.size} wpłat). Płatności za bieżący miesiąc: $payments. Otwarte zadania: $notes. " +
-            "Pamięć o użytkowniku: $memory.]" + freshConversations()
+            "Przypomnienia i pobudki: $reminders. Pamięć o użytkowniku: $memory.]" + freshConversations()
     }
 
     /** Tekst rozmów nagranych przed chwilą – każda tylko raz, żeby Jarvis odpowiadał o nich od razu. */
@@ -134,6 +139,16 @@ class JarvisTools(private val ledger: Ledger, private val clock: () -> LocalDate
                     if (time.isEmpty()) return "Błąd: brak godziny nagrania (z wyników szukaj_w_nagraniach)." to false
                     read(day, time) to false
                 }
+                "ustaw_przypomnienie", "ustaw_pobudke" -> {
+                    val wake = name == "ustaw_pobudke"
+                    val at = parseWhen(input["kiedy"] as? String) ?: return "Błąd: nie rozumiem terminu – podaj RRRR-MM-DDTGG:MM." to false
+                    if (at.isBefore(clock().minusMinutes(1))) return "Błąd: $at już minęło." to false
+                    val text = (input["tekst"] as? String)?.trim().orEmpty()
+                    if (!wake && text.isEmpty()) return "Błąd: o czym przypomnieć?" to false
+                    val saved = ledger.addReminder(at, text, wake)
+                    val kind = if (wake) "Pobudka" else "Przypomnienie"
+                    "$kind #${saved.id} ustawione na ${at.toLocalDate()} ${"%02d:%02d".format(at.hour, at.minute)} (${Polish.dayName(at.toLocalDate())})." to true
+                }
                 "pobierz_strone" -> {
                     val url = (input["adres"] as? String)?.trim().orEmpty()
                     if (url.isEmpty()) return "Błąd: brak adresu." to false
@@ -144,6 +159,16 @@ class JarvisTools(private val ledger: Ledger, private val clock: () -> LocalDate
         } catch (e: Exception) {
             "Błąd narzędzia: ${e.message}" to false
         }
+    }
+
+    /** „2026-10-30T06:30”, „2026-10-30 06:30” albo samo „19:00” (dziś, a gdy minęło – jutro). */
+    private fun parseWhen(value: String?): LocalDateTime? {
+        val v = value?.trim()?.replace(' ', 'T')?.takeIf { it.isNotEmpty() } ?: return null
+        runCatching { return LocalDateTime.parse(v) }
+        val time = runCatching { LocalTime.parse(v) }.getOrNull() ?: return null
+        val now = clock()
+        val today = now.toLocalDate().atTime(time)
+        return if (today.isBefore(now)) today.plusDays(1) else today
     }
 
     private fun money(value: Any?): Long? = when (value) {
@@ -224,6 +249,18 @@ class JarvisTools(private val ledger: Ledger, private val clock: () -> LocalDate
             „zadzwoń oddzwoń przyjedź zrobić wycena termin dostawa zamówienie jutro”) i przeczytaj obiecujące
             nagrania; zadania, które z nich wynikają, wymień i zapisz narzędziem dodaj_zadanie.
 
+            Przypomnienia i pobudki: „przypomnij mi o 19, żebym wyjechał do lekarza” – narzędzie ustaw_przypomnienie
+            (godzina liczona od teraz; „za pół godziny” policz sam z bieżącej godziny). „Obudź mnie jutro o 6:30” –
+            narzędzie ustaw_pobudke: to nie zwykły budzik, tylko ty budzisz użytkownika głosem. Potwierdź krótko dzień
+            i godzinę. Odwołanie albo zmiana – usun_wpis (numer z listy przypomnień w stanie Jarvisa) i ewentualnie nowe.
+            Gdy dostajesz wiadomość [PRZYPOMNIENIE …], to nadeszła pora – powiedz o tym użytkownikowi naturalnie, jednym
+            dwoma zdaniami (np. „Szefie, dziewiętnasta – pora jechać do lekarza.”). Gdy dostajesz [POBUDKA …] – obudź
+            użytkownika po swojemu, jak Jarvis Tony'ego Starka: przywitaj się, podaj godzinę, pogodę na dziś (narzędzie
+            pogoda, miasto z pamięci), co ma dziś w planach (zadania, przypomnienia, terminy z pamięci) – krótko, z
+            lekkim humorem, i zapytaj, czy już wstaje. Przy kolejnych próbach bądź coraz bardziej stanowczy i zabawny,
+            nie powtarzaj pogody i planu, tylko krótko ponaglaj. Gdy użytkownik prosi o jeszcze chwilę („daj mi 10
+            minut”), ustaw nową pobudkę za tyle minut i potwierdź.
+
             Prowadzisz też użytkownikowi rejestr zarobków, płatności (m.in. ZUS i alimenty) i zadań.
             - Zanim zapiszesz zarobek, powtórz kwotę i miejsce i zapytaj, czy się zgadza. Zapisz dopiero po potwierdzeniu.
               Jeśli użytkownik od razu podał kwotę i potwierdził albo sam poprawia wpis – zapisz bez ponownego pytania.
@@ -233,7 +270,7 @@ class JarvisTools(private val ledger: Ledger, private val clock: () -> LocalDate
               znasz z wyników narzędzi i z pobierz_finanse) i ewentualnie zapisz poprawiony.
             - Pomagaj też w zwykłych sprawach: odpowiadaj na pytania, doradzaj, licz, planuj, tłumacz, rozmawiaj.
 
-            Technicznie jeszcze nie masz dostępu do: dzwonienia, SMS-ów, maili, kalendarza i muzyki
+            Technicznie jeszcze nie masz dostępu do: dzwonienia, SMS-ów, maili, kalendarza Google i muzyki
             (są w przygotowaniu). Jeśli ktoś o to poprosi, powiedz to krótko i zaproponuj, co możesz zrobić zamiast tego.
         """.trimIndent()
 
@@ -319,6 +356,24 @@ class JarvisTools(private val ledger: Ledger, private val clock: () -> LocalDate
                     "godzina" to mapOf("type" to "string", "description" to "Godzina nagrania z wyników szukaj_w_nagraniach, np. „14:03:21”."),
                 ),
                 listOf("data", "godzina"),
+            ),
+            Spec(
+                "ustaw_przypomnienie",
+                "Ustawia przypomnienie: o podanej porze Jarvis sam się odezwie i powie, o czym przypomnieć.",
+                mapOf(
+                    "kiedy" to mapOf("type" to "string", "description" to "Data i godzina, RRRR-MM-DDTGG:MM, np. 2026-10-29T19:00."),
+                    "tekst" to mapOf("type" to "string", "description" to "O czym przypomnieć, np. „wyjazd do lekarza”."),
+                ),
+                listOf("kiedy", "tekst"),
+            ),
+            Spec(
+                "ustaw_pobudke",
+                "Ustawia pobudkę: o podanej porze Jarvis budzi użytkownika głosem (pogoda, plan dnia) i ponawia, aż ten się odezwie.",
+                mapOf(
+                    "kiedy" to mapOf("type" to "string", "description" to "Data i godzina, RRRR-MM-DDTGG:MM, np. 2026-10-30T06:30."),
+                    "tekst" to mapOf("type" to "string", "description" to "Opcjonalnie: po co wstaje albo jak budzić, np. „wyjazd na budowę”."),
+                ),
+                listOf("kiedy"),
             ),
             Spec(
                 "pobierz_strone",

@@ -13,8 +13,11 @@ data class Note(val id: Long, val created: LocalDateTime, val text: String, val 
 /** Coś, co Jarvis zapamiętał o użytkowniku (osoby, praca, preferencje, ustalenia). */
 data class Memory(val id: Long, val created: LocalDateTime, val text: String)
 
+/** Przypomnienie na konkretną chwilę; [wake] = pobudka (Jarvis budzi po swojemu, aż użytkownik się odezwie). */
+data class Reminder(val id: Long, val at: LocalDateTime, val text: String, val wake: Boolean, val done: Boolean = false)
+
 /**
- * Twarde dane Jarvisa: zarobki, płatności, notatki i pamięć. Zapis na dysk robi warstwa Androida.
+ * Twarde dane Jarvisa: zarobki, płatności, notatki, pamięć i przypomnienia. Zapis na dysk robi warstwa Androida.
  * Metody są synchronizowane – AI zapisuje dane w tle, a ekran czyta je jednocześnie.
  */
 class Ledger {
@@ -22,7 +25,25 @@ class Ledger {
     val payments = mutableListOf<Payment>()
     val notes = mutableListOf<Note>()
     val memories = mutableListOf<Memory>()
+    val reminders = mutableListOf<Reminder>()
     var nextId = 1L
+
+    @Synchronized
+    fun addReminder(at: LocalDateTime, text: String, wake: Boolean) =
+        Reminder(nextId++, at, text, wake).also { reminders += it }
+
+    /** Przypomnienia jeszcze nie odegrane, od najbliższego. */
+    @Synchronized
+    fun pendingReminders() = reminders.filter { !it.done }.sortedBy { it.at }
+
+    @Synchronized
+    fun markReminderDone(id: Long) {
+        val i = reminders.indexOfFirst { it.id == id }
+        if (i >= 0) reminders[i] = reminders[i].copy(done = true)
+        // Stare, odegrane przypomnienia nie są potrzebne – zostawiamy ostatnie 50.
+        val done = reminders.filter { it.done }
+        if (done.size > 50) reminders.removeAll(done.sortedBy { it.at }.take(done.size - 50).toSet())
+    }
 
     @Synchronized
     fun addMemory(created: LocalDateTime, text: String) =
@@ -55,7 +76,7 @@ class Ledger {
     @Synchronized
     fun remove(id: Long): Boolean =
         incomes.removeIf { it.id == id } || payments.removeIf { it.id == id } || notes.removeIf { it.id == id } ||
-            memories.removeIf { it.id == id }
+            memories.removeIf { it.id == id } || reminders.removeIf { it.id == id }
 
     @Synchronized
     fun incomesIn(month: YearMonth) = incomes.filter { YearMonth.from(it.date) == month }

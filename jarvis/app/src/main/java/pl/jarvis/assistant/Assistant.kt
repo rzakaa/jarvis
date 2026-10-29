@@ -2,9 +2,11 @@ package pl.jarvis.assistant
 
 import android.content.Context
 import android.content.Intent
+import android.media.AudioManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -19,6 +21,7 @@ import pl.jarvis.brain.Ledger
 import pl.jarvis.brain.LedgerStore
 import pl.jarvis.brain.JarvisTools
 import pl.jarvis.brain.OpenAiCompatibleBrain
+import pl.jarvis.brain.Reminder
 import pl.jarvis.recorder.AiProvider
 import pl.jarvis.recorder.AssistantSettings
 import pl.jarvis.recorder.Prefs
@@ -89,6 +92,19 @@ object Assistant {
 
     private var listeningEndedAt = 0L
 
+    /** Trwa pobudka – Jarvis budzi co [WAKE_REPEAT_MS], dopóki użytkownik się nie odezwie. */
+    private var waking: Reminder? = null
+    private var wakeAttempt = 0
+    private val wakeAgain = Runnable { wakeUp() }
+    private var awake: PowerManager.WakeLock? = null
+
+    /** Ile razy budzimy, zanim damy spokój (co 2 min – razem ok. 12 min). */
+    private const val MAX_WAKE_ATTEMPTS = 6
+    private const val WAKE_REPEAT_MS = 2 * 60_000L
+
+    /** Przypomnienie spóźnione o więcej (np. telefon był wyłączony) – już go nie mówimy. */
+    private const val TOO_LATE_MIN = 120L
+
     /** Chwila dla rejestratora na oddanie mikrofonu przed startem rozpoznawania. */
     private const val MIC_HANDOVER_MS = 250L
     /** Najdłużej tyle czekamy na przepisanie rozmowy sprzed chwili. */
@@ -115,6 +131,8 @@ object Assistant {
         JarvisTools.recordingsSearch = { from, to, query -> RecordingNotes.search(ctx, from, to, query) }
         JarvisTools.recordingRead = { day, time -> RecordingNotes.read(ctx, day, time) }
         JarvisTools.recentConversations = { RecordingNotes.recent(ctx) }
+        // Alarmy znikają przy reinstalacji aplikacji – ustawiamy najbliższe przypomnienie od nowa.
+        Reminders.schedule(ctx, ledger)
         addMessage(
             ChatMessage(
                 false,
@@ -169,6 +187,100 @@ object Assistant {
         say(GREETINGS.random(), show = false)
     }
 
+    /** Nadeszła pora przypomnienia lub pobudki (alarm systemowy). */
+    fun onRemindersDue() {
+        val now = LocalDateTime.now()
+        val due = ledger.pendingReminders().filter { !it.at.isAfter(now.plusSeconds(30)) }
+        if (due.isEmpty()) {
+            appContext?.let { Reminders.schedule(it, ledger) }
+            return
+        }
+        keepAwake(3 * 60_000L)
+        // W trakcie rozmowy nie przerywamy – mówimy, gdy się skończy.
+        if (state.value != AssistantState.IDLE) {
+            handler.postDelayed({ onRemindersDue() }, 30_000L)
+            return
+        }
+        due.forEach { ledger.markReminderDone(it.id) }
+        dataChanged()
+        val fresh = due.filter { it.at.isAfter(now.minusMinutes(TOO_LATE_MIN)) }
+        val wake = fresh.lastOrNull { it.wake }
+        val notes = fresh.filter { !it.wake }
+        when {
+            wake != null -> {
+                handler.removeCallbacks(wakeAgain)
+                waking = wake.copy(text = (listOf(wake.text) + notes.map { it.text }).filter { it.isNotBlank() }.joinToString("; "))
+                wakeAttempt = 0
+                keepAwake((MAX_WAKE_ATTEMPTS + 1) * WAKE_REPEAT_MS)
+                wakeUp()
+            }
+            notes.isNotEmpty() -> {
+                val what = notes.joinToString("; ") { it.text }
+                speakFromAi("[PRZYPOMNIENIE – jest ${clock(now)}. Przypomnij teraz użytkownikowi: $what]", "Przypominam: $what.", alarm = false)
+            }
+        }
+    }
+
+    /** Kolejna próba pobudki – Jarvis budzi po swojemu (pogoda, plan dnia), coraz bardziej stanowczo. */
+    private fun wakeUp() {
+        val w = waking ?: return
+        if (state.value != AssistantState.IDLE) {
+            handler.postDelayed(wakeAgain, 30_000L)
+            return
+        }
+        if (++wakeAttempt > MAX_WAKE_ATTEMPTS) {
+            stopWaking()
+            return
+        }
+        val now = LocalDateTime.now()
+        val reason = w.text.takeIf { it.isNotBlank() }?.let { ", powód / uwagi: $it" }.orEmpty()
+        speakFromAi(
+            "[POBUDKA – jest ${clock(now)}, próba $wakeAttempt z $MAX_WAKE_ATTEMPTS$reason. Obudź użytkownika.]",
+            if (wakeAttempt == 1) "Dzień dobry. Jest ${clock(now)}, pora wstawać." else "Pobudka, szefie! Jest ${clock(now)}.",
+            alarm = true,
+        )
+    }
+
+    private fun stopWaking() {
+        waking = null
+        handler.removeCallbacks(wakeAgain)
+        awake?.let { if (it.isHeld) it.release() }
+        awake = null
+    }
+
+    /** Jarvis sam zaczyna mówić (przypomnienie, pobudka): AI układa wypowiedź, potem słuchamy odpowiedzi. */
+    private fun speakFromAi(prompt: String, fallback: String, alarm: Boolean) {
+        conversation = true
+        greeting = false
+        setState(AssistantState.THINKING)
+        val brain = ai
+        if (brain == null) {
+            say(fallback, "lokalnie", alarm = alarm)
+            return
+        }
+        val name = aiName
+        worker.execute {
+            val result = runCatching { brain.handle(prompt) }.getOrNull()
+            handler.post {
+                if (result?.changed == true) dataChanged()
+                val text = result?.text?.takeIf { it.isNotBlank() }
+                say(text ?: fallback, if (text != null) name else "lokalnie", alarm = alarm)
+            }
+        }
+    }
+
+    /** Telefon nie może zasnąć w trakcie przypomnienia czy pobudki (gdy rejestrator jest wyłączony). */
+    private fun keepAwake(ms: Long) {
+        val ctx = appContext ?: return
+        val lock = awake ?: ctx.getSystemService(PowerManager::class.java)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Jarvis:przypomnienie")
+            .apply { setReferenceCounted(false) }
+            .also { awake = it }
+        lock.acquire(ms)
+    }
+
+    private fun clock(t: LocalDateTime) = "%02d:%02d".format(t.hour, t.minute)
+
     /** Dotknięcie reaktora: start rozmowy albo jej zakończenie. */
     fun toggleListening() {
         when (state.value) {
@@ -181,6 +293,7 @@ object Assistant {
                 PiperVoice.stop()
                 conversation = false
                 greeting = false
+                stopWaking()
                 setState(AssistantState.IDLE)
             }
             else -> {
@@ -260,6 +373,8 @@ object Assistant {
     }
 
     private fun handleText(text: String) {
+        // Odezwał się – pobudka zrobiła swoje (o „jeszcze 10 minut” zadba AI, ustawiając nową).
+        stopWaking()
         addMessage(ChatMessage(true, text))
         if (END_PHRASES.containsMatchIn(text.lowercase())) conversation = false
         setState(AssistantState.THINKING)
@@ -305,7 +420,7 @@ object Assistant {
         say(text, source)
     }
 
-    private fun say(text: String, source: String? = null, show: Boolean = true) {
+    private fun say(text: String, source: String? = null, show: Boolean = true, alarm: Boolean = false) {
         if (show) addMessage(ChatMessage(false, text, source))
         val wait = (UNMUTE_DELAY_MS + 50 - (System.currentTimeMillis() - listeningEndedAt)).coerceAtLeast(0)
         val ctx = appContext
@@ -313,7 +428,7 @@ object Assistant {
             // Głos Jarvisa: Piper pl_PL-bass-high.
             setState(AssistantState.SPEAKING)
             handler.postDelayed({
-                if (state.value == AssistantState.SPEAKING) PiperVoice.speak(text) { afterSpeaking() }
+                if (state.value == AssistantState.SPEAKING) PiperVoice.speak(text, alarm) { afterSpeaking() }
             }, wait)
             return
         }
@@ -323,7 +438,8 @@ object Assistant {
             // Mówimy dopiero po przywróceniu dźwięku wyciszonego na czas słuchania.
             val id = "jarvis-${utteranceCounter++}"
             handler.postDelayed({
-                if (state.value == AssistantState.SPEAKING) engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, id)
+                val params = if (alarm) Bundle().apply { putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_ALARM) } else null
+                if (state.value == AssistantState.SPEAKING) engine.speak(text, TextToSpeech.QUEUE_FLUSH, params, id)
             }, wait)
         } else {
             afterSpeaking()
@@ -359,10 +475,18 @@ object Assistant {
         followUp = false
         partial.value = ""
         setState(AssistantState.IDLE)
+        // Pobudka bez odzewu – budzimy znowu za chwilę.
+        if (waking != null) {
+            handler.removeCallbacks(wakeAgain)
+            handler.postDelayed(wakeAgain, WAKE_REPEAT_MS)
+        }
     }
 
     private fun dataChanged() {
-        appContext?.let { LedgerStore.save(it, ledger) }
+        appContext?.let {
+            LedgerStore.save(it, ledger)
+            Reminders.schedule(it, ledger)
+        }
         ledgerVersion.update { it + 1 }
     }
 

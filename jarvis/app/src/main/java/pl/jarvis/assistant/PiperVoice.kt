@@ -184,8 +184,11 @@ object PiperVoice {
         }
     }
 
-    /** Mówi [text]; [onDone] woła na głównym wątku po zakończeniu (albo przerwaniu). */
-    fun speak(text: String, onDone: () -> Unit) {
+    /**
+     * Mówi [text]; [onDone] woła na głównym wątku po zakończeniu (albo przerwaniu).
+     * [alarm] – pobudka: głośność budzika zamiast multimediów.
+     */
+    fun speak(text: String, alarm: Boolean = false, onDone: () -> Unit) {
         val gen = ++generation
         worker.execute {
             if (gen != generation) return@execute
@@ -198,7 +201,7 @@ object PiperVoice {
             val out = AudioTrack.Builder()
                 .setAudioAttributes(
                     AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ASSISTANT)
+                        .setUsage(if (alarm) AudioAttributes.USAGE_ALARM else AudioAttributes.USAGE_ASSISTANT)
                         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                         .build(),
                 )

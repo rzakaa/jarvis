@@ -39,6 +39,12 @@ object LedgerStore {
             root.optJSONArray("memories")?.forEachObject {
                 ledger.memories += Memory(it.getLong("id"), LocalDateTime.parse(it.getString("created")), it.getString("text"))
             }
+            root.optJSONArray("reminders")?.forEachObject {
+                ledger.reminders += Reminder(
+                    it.getLong("id"), LocalDateTime.parse(it.getString("at")), it.getString("text"),
+                    it.optBoolean("wake", false), it.optBoolean("done", false),
+                )
+            }
         }
         return ledger
     }
@@ -58,6 +64,10 @@ object LedgerStore {
             }))
             .put("memories", JSONArray(ledger.memories.map {
                 JSONObject().put("id", it.id).put("created", it.created.toString()).put("text", it.text)
+            }))
+            .put("reminders", JSONArray(ledger.reminders.map {
+                JSONObject().put("id", it.id).put("at", it.at.toString()).put("text", it.text)
+                    .put("wake", it.wake).put("done", it.done)
             }))
         // Najpierw do pliku tymczasowego – przerwany zapis nie zniszczy danych.
         val target = file(context)
