@@ -8,7 +8,7 @@ import java.io.File
 
 const val SILENCE_DB = -90f
 
-enum class RecorderStatus { STOPPED, LISTENING, RECORDING }
+enum class RecorderStatus { STOPPED, LISTENING, RECORDING, PAUSED }
 
 /**
  * Jak łatwo rejestrator uznaje dźwięk za mowę.
@@ -33,6 +33,9 @@ object RecorderState {
     val levelDb = MutableStateFlow(SILENCE_DB)
     val sensitivity = MutableStateFlow(Sensitivity.MEDIUM)
     val micSource = MutableStateFlow(MicSource.MIC)
+
+    /** Mikrofon chwilowo potrzebny komuś innemu (rozmowa z Jarvisem) – rejestrator czeka. */
+    val micPaused = MutableStateFlow(false)
 
     /** Z czym faktycznie otworzył się mikrofon, np. „48000 Hz · Mikrofon”. */
     val micInfo = MutableStateFlow<String?>(null)

@@ -7,6 +7,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import pl.jarvis.assistant.Assistant
 import pl.jarvis.recorder.Prefs
 import pl.jarvis.recorder.RecorderService
 import pl.jarvis.recorder.RecorderState
@@ -20,6 +21,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         RecorderState.sensitivity.value = Prefs.sensitivity(this)
         RecorderState.micSource.value = Prefs.micSource(this)
+        Assistant.init(this)
         setContent {
             JarvisTheme {
                 MainScreen()

@@ -8,6 +8,16 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
+    <!-- Usługi rozpoznawania i syntezy mowy (Android 11+ wymaga ich zadeklarowania). -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
     <!-- allowBackup=false: nagrania nie trafiają do kopii zapasowej w chmurze Google. -->
     <application
         android:allowBackup="false"

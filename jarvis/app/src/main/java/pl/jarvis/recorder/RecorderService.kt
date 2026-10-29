@@ -159,6 +159,18 @@ class RecorderService : Service() {
         record.startRecording()
         try {
             while (running) {
+                if (RecorderState.micPaused.value) {
+                    // Rozmowa z Jarvisem: kończymy bieżące nagranie i oddajemy mikrofon.
+                    segmenter.close()
+                    record.stop()
+                    RecorderState.levelDb.value = SILENCE_DB
+                    setStatus(RecorderStatus.PAUSED)
+                    while (running && RecorderState.micPaused.value) Thread.sleep(50)
+                    if (!running) break
+                    record.startRecording()
+                    setStatus(RecorderStatus.LISTENING)
+                    continue
+                }
                 var captured = 0
                 while (captured < captureFrame.size && running) {
                     val n = record.read(captureFrame, captured, captureFrame.size - captured)
@@ -233,7 +245,11 @@ class RecorderService : Service() {
             Intent(this, RecorderService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_IMMUTABLE,
         )
-        val text = if (status == RecorderStatus.RECORDING) "Nagrywam rozmowę" else "Nasłuchuję"
+        val text = when (status) {
+            RecorderStatus.RECORDING -> "Nagrywam rozmowę"
+            RecorderStatus.PAUSED -> "Wstrzymane – rozmowa z Jarvisem"
+            else -> "Nasłuchuję"
+        }
         return Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_mic)
             .setContentTitle("Jarvis")
