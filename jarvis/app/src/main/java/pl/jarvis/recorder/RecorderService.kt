@@ -177,6 +177,7 @@ class RecorderService : Service() {
                 file = null
                 if (running) setStatus(RecorderStatus.LISTENING)
                 RecorderState.recordingsChanged()
+                if (keep) Transcriber.onRecordingFinished(this@RecorderService)
             }
         })
 

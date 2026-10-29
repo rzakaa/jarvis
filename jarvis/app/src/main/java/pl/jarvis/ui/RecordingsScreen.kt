@@ -98,7 +98,7 @@ fun RecordingsScreen() {
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item { HudLabel("rejestrator rozmów · wersja 0.25", color = Hud.Cyan, size = 13.sp) }
+        item { HudLabel("rejestrator rozmów · wersja 0.26", color = Hud.Cyan, size = 13.sp) }
         item { StatusPanel(status, onToggle) }
         item { SettingsPanel(status) }
         error?.let { message -> item { Text(message, color = Hud.Red, fontSize = 14.sp) } }
@@ -192,7 +192,7 @@ private fun TranscriptionPanel() {
                 HudButton("przepisz teraz", onClick = { Transcriber.runPending(context) }, modifier = Modifier.padding(top = 8.dp))
         }
         Text(
-            "Tekst powstaje w telefonie – samo nagranie nigdy go nie opuszcza. Przepisuję sam, gdy telefon się ładuje. " +
+            "Tekst powstaje w telefonie – samo nagranie nigdy go nie opuszcza. Model pobiera się sam na Wi-Fi, a nagrania przepisuję zaraz po zakończeniu (przy ładowaniu albo od 40% baterii). " +
                 "Ze skrótów Jarvis wyłapuje zadania (np. prośby klientów) i odpowiada na pytania o rozmowy.",
             color = Hud.TextDim,
             fontSize = 12.sp,

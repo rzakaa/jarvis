@@ -2,6 +2,7 @@ package pl.jarvis.recorder
 
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
+import ai.onnxruntime.OrtSession
 import java.io.Closeable
 import java.nio.FloatBuffer
 import kotlin.random.Random
@@ -16,9 +17,16 @@ import kotlin.random.Random
  */
 class OpenWakeWord(melModel: ByteArray, embeddingModel: ByteArray, wakeModel: ByteArray) : Closeable {
     private val env = OrtEnvironment.getEnvironment()
-    private val mel = env.createSession(melModel)
-    private val embedding = env.createSession(embeddingModel)
-    private val wake = env.createSession(wakeModel)
+
+    // Domyślnie każda sesja bierze tyle wątków, ile rdzeni – trzy modele trzymały ~4 rdzenie
+    // non stop (bateria!). Kawałek co 80 ms jeden wątek liczy z dużym zapasem.
+    private val options = OrtSession.SessionOptions().apply {
+        setIntraOpNumThreads(1)
+        setInterOpNumThreads(1)
+    }
+    private val mel = env.createSession(melModel, options)
+    private val embedding = env.createSession(embeddingModel, options)
+    private val wake = env.createSession(wakeModel, options)
 
     private val melBuffer = ArrayDeque<FloatArray>()
     private val features = ArrayDeque<FloatArray>()
@@ -121,6 +129,7 @@ class OpenWakeWord(melModel: ByteArray, embeddingModel: ByteArray, wakeModel: By
         wake.close()
         embedding.close()
         mel.close()
+        options.close()
     }
 
     companion object {

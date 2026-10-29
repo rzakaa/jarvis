@@ -1,7 +1,13 @@
 package pl.jarvis.recorder
 
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.ApplicationInfo
+import android.net.ConnectivityManager
 import android.os.BatteryManager
+import android.os.Build
 import android.os.Process
 import android.util.Log
 import com.k2fsa.sherpa.onnx.FeatureConfig
@@ -22,7 +28,8 @@ import java.util.concurrent.TimeUnit
  * Zamiana nagrań na tekst w telefonie (NeMo FastConformer CTC, wielojęzyczny z polskim, int8, ~100 MB).
  * Audio nigdy nie opuszcza telefonu. Tekst zapisujemy obok nagrania: 14-03-21.wav → 14-03-21.txt.
  *
- * Przepisywanie rusza samo podczas ładowania telefonu (albo przyciskiem „przepisz teraz”).
+ * Model pobiera się sam na Wi-Fi; nagranie przepisujemy zaraz po zakończeniu (przy ładowaniu
+ * albo od 40% baterii), zaległości co 10 min. Jest też przycisk „przepisz teraz”.
  * Po każdym przepisanym nagraniu wołamy [onTranscribed] – tam powstaje skrót.
  */
 object Transcriber {
@@ -79,7 +86,10 @@ object Transcriber {
         worker.execute {
             try {
                 VoiceDownloader.downloadAndExtract(URL, dir(ctx)) { progress.value = it }
+                Log.d(TAG, "model pobrany")
                 status.value = Status.READY
+                updatePending(ctx)
+                if (batteryAllows(ctx)) runPending(ctx)
             } catch (e: Exception) {
                 error.value = e.message
                 status.value = Status.ERROR
@@ -87,25 +97,68 @@ object Transcriber {
         }
     }
 
-    /** Raz na usługę: co 10 min, gdy telefon się ładuje, przepisuje zaległe nagrania. */
+    /**
+     * Raz na usługę: model pobiera się sam na Wi-Fi, a co 10 min nadrabiamy zaległe nagrania
+     * (gdy bateria na to pozwala). Świeże nagrania przepisuje [onRecordingFinished].
+     */
     @Synchronized
     fun startAuto(context: Context) {
         if (autoStarted) return
         autoStarted = true
         val ctx = context.applicationContext
-        timer.scheduleWithFixedDelay({ if (isCharging(ctx)) runPending(ctx) }, 1, 10, TimeUnit.MINUTES)
+        // Tylko wersja testowa: `adb shell am broadcast -a pl.jarvis.DEBUG_TRANSCRIBE` przepisuje od razu.
+        if (ctx.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+            val receiver = object : BroadcastReceiver() {
+                override fun onReceive(c: Context, intent: Intent) = runPending(ctx)
+            }
+            val filter = IntentFilter("pl.jarvis.DEBUG_TRANSCRIBE")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) ctx.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
+            else ctx.registerReceiver(receiver, filter)
+        }
+        timer.scheduleWithFixedDelay({
+            if (!isDownloaded(ctx)) {
+                if (status.value != Status.DOWNLOADING && onWifi(ctx)) download(ctx)
+            } else if (batteryAllows(ctx)) {
+                runPending(ctx)
+            }
+        }, 10, 600, TimeUnit.SECONDS)
+    }
+
+    /** Rejestrator zapisał nagranie – przepisujemy od razu, jeśli bateria pozwala. */
+    fun onRecordingFinished(context: Context) {
+        val ctx = context.applicationContext
+        // Wołane z wątku nagrywania – listę plików czytamy w tle, żeby nie gubić dźwięku.
+        worker.execute { updatePending(ctx) }
+        if (batteryAllows(ctx)) runPending(ctx)
+    }
+
+    /** Przepisywanie zużywa procesor: przy ładowaniu zawsze, na baterii – od 40%. */
+    private fun batteryAllows(context: Context): Boolean {
+        val battery = context.getSystemService(BatteryManager::class.java) ?: return true
+        return battery.isCharging || battery.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) >= 40
+    }
+
+    private fun onWifi(context: Context): Boolean {
+        val connectivity = context.getSystemService(ConnectivityManager::class.java) ?: return false
+        val network = connectivity.activeNetwork ?: return false
+        return !connectivity.isActiveNetworkMetered && connectivity.getNetworkCapabilities(network) != null
     }
 
     /** Przepisuje wszystkie nagrania bez tekstu (po kolei, w tle). */
     fun runPending(context: Context) {
         val ctx = context.applicationContext
-        if (!isDownloaded(ctx) || queued) return
+        if (!isDownloaded(ctx) || queued) {
+            Log.d(TAG, "runPending pominięte: pobrany=${isDownloaded(ctx)}, w kolejce=$queued")
+            return
+        }
         queued = true
         worker.execute {
             try {
                 Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
+                Log.d(TAG, "start: czeka ${waiting(ctx).size} nagrań")
                 while (true) {
                     val next = waiting(ctx).firstOrNull() ?: break
+                    Log.d(TAG, "przepisuję ${next.parentFile?.name}/${next.name} (${next.length() / 32_000} s)")
                     status.value = Status.WORKING
                     val started = System.currentTimeMillis()
                     val text = transcribe(ctx, next)
@@ -135,10 +188,8 @@ object Transcriber {
         pending.value = runCatching { waiting(context).size }.getOrDefault(0)
     }
 
-    private fun isCharging(context: Context) =
-        context.getSystemService(BatteryManager::class.java)?.isCharging == true
-
     private fun engine(context: Context): OfflineRecognizer = recognizer ?: run {
+        Log.d(TAG, "wczytuję model mowy")
         val d = dir(context).path
         OfflineRecognizer(
             config = OfflineRecognizerConfig(
