@@ -104,6 +104,11 @@ class RecorderService : Service() {
                         // Ta częstotliwość daje same zera – otwieramy mikrofon w następnej.
                         brokenRates += e.rate
                         RecorderState.status.value = RecorderStatus.LISTENING
+                    } catch (e: MicLostException) {
+                        // Mikrofon przestał dawać dźwięk – otwieramy go od nowa.
+                        Log.w("JarvisMic", "mikrofon nie daje dźwięku – otwieram od nowa")
+                        Thread.sleep(500)
+                        RecorderState.status.value = RecorderStatus.LISTENING
                     }
                 }
             } catch (e: Exception) {
@@ -192,6 +197,9 @@ class RecorderService : Service() {
                     setStatus(RecorderStatus.PAUSED)
                     while (running && RecorderState.micPaused.value) Thread.sleep(50)
                     if (!running) break
+                    // Android 9: rozpoznawanie mowy oddaje mikrofon z opóźnieniem – start za wcześnie
+                    // kończył się „martwym” mikrofonem.
+                    Thread.sleep(MIC_RESUME_DELAY_MS)
                     record.startRecording()
                     setStatus(RecorderStatus.LISTENING)
                     zeroFrames = 0
@@ -200,9 +208,19 @@ class RecorderService : Service() {
                     continue
                 }
                 var captured = 0
+                var emptyReads = 0
                 while (captured < captureFrame.size && running) {
                     val n = record.read(captureFrame, captured, captureFrame.size - captured)
                     if (n < 0) throw IllegalStateException("mikrofon zwrócił błąd $n")
+                    if (n == 0) {
+                        // Mikrofon nic nie daje (zajęty albo nie ruszył) – ponawiamy start,
+                        // a po ok. 3 s otwieramy go od nowa. Bez tego pętla kręciła się bez końca.
+                        if (++emptyReads > EMPTY_READS_LIMIT) throw MicLostException()
+                        if (record.recordingState != AudioRecord.RECORDSTATE_RECORDING) runCatching { record.startRecording() }
+                        Thread.sleep(50)
+                        continue
+                    }
+                    emptyReads = 0
                     captured += n
                 }
                 // Prawdziwy mikrofon nigdy nie daje idealnych zer. Emulator 37 w 48 kHz potrafi –
@@ -345,6 +363,8 @@ class RecorderService : Service() {
         private const val FRAME_SAMPLES = 480
         private val CAPTURE_RATES = intArrayOf(48_000, Recordings.SAMPLE_RATE)
         private const val ZERO_FRAMES_LIMIT = 100 // ok. 3 s przy ramkach 30 ms
+        private const val EMPTY_READS_LIMIT = 60 // ok. 3 s po 50 ms
+        private const val MIC_RESUME_DELAY_MS = 400L
 
         /** Częstotliwości, w których mikrofon dawał same zera (do końca działania aplikacji). */
         private val brokenRates = mutableSetOf<Int>()
@@ -372,3 +392,6 @@ class RecorderService : Service() {
 
 /** Mikrofon w danej częstotliwości daje same zera (zepsuta ścieżka dźwięku, np. w emulatorze). */
 private class SilentInputException(val rate: Int) : Exception("cisza z mikrofonu w $rate Hz")
+
+/** Mikrofon przestał oddawać dźwięk (np. zajęty przez rozpoznawanie mowy) – trzeba go otworzyć od nowa. */
+private class MicLostException : Exception("mikrofon nie daje dźwięku")
