@@ -61,6 +61,37 @@ object WebTools {
         return lines.joinToString("\n")
     }
 
+    /**
+     * Kartka z kalendarza na dzień: święta państwowe (Nager.Date), imieniny, święta nietypowe
+     * (np. Dzień Hydraulika), przysłowie, wschód i zachód słońca (kalbi.pl).
+     */
+    fun dayCalendar(day: LocalDate): String {
+        val lines = mutableListOf("Kalendarz na $day (${Polish.dayName(day)}).")
+        runCatching {
+            val holidays = getJson("https://date.nager.at/api/v3/PublicHolidays/${day.year}/PL")
+                .filter { it.path("date").asText() == day.toString() }.map { it.path("localName").asText() }
+            lines += "Święto państwowe: " + holidays.joinToString().ifEmpty { "brak" } + "."
+        }
+        val page = runCatching {
+            val request = Request.Builder().url("https://www.kalbi.pl/${day.dayOfMonth}-${MONTHS[day.monthValue - 1]}")
+                .header("User-Agent", "Mozilla/5.0 (Android) Jarvis").build()
+            HTTP.newCall(request).execute().use { if (it.isSuccessful) htmlToText(it.body?.string().orEmpty()) else "" }
+        }.getOrDefault("").replace('\n', ' ').replace("&#8222;", "„").replace("&#8221;", "”")
+        // Kartka: od „Imieniny obchodzą” do lokalizacji; potem opisy świąt nietypowych.
+        val card = page.substringAfter("Imieniny obchodzą:", "").substringBefore("Lokalizacja:").trim()
+        if (card.isNotEmpty()) lines += "Imieniny obchodzą: $card"
+        val unusual = page.substringAfter("Jakie jest święto nietypowe", "").substringAfter("?", "")
+            .substringBefore("Ile trwa dzień").trim().take(1200)
+        if (unusual.isNotEmpty()) lines += "Opisy świąt nietypowych: $unusual"
+        if (card.isEmpty()) lines += "(Nie udało się pobrać imienin i świąt nietypowych.)"
+        return lines.joinToString("\n")
+    }
+
+    private val MONTHS = listOf(
+        "stycznia", "lutego", "marca", "kwietnia", "maja", "czerwca",
+        "lipca", "sierpnia", "wrzesnia", "pazdziernika", "listopada", "grudnia",
+    )
+
     /** Tekst strony (bez znaczników), ucięty do [PAGE_LIMIT] znaków. */
     fun fetchPage(url: String): String {
         val fixed = if (url.startsWith("http://") || url.startsWith("https://")) url else "https://$url"

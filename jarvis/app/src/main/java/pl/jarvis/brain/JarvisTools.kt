@@ -149,6 +149,10 @@ class JarvisTools(private val ledger: Ledger, private val clock: () -> LocalDate
                     val kind = if (wake) "Pobudka" else "Przypomnienie"
                     "$kind #${saved.id} ustawione na ${at.toLocalDate()} ${"%02d:%02d".format(at.hour, at.minute)} (${Polish.dayName(at.toLocalDate())})." to true
                 }
+                "kalendarz_dnia" -> {
+                    val day = (input["data"] as? String)?.takeIf { it.isNotBlank() }?.let { LocalDate.parse(it) } ?: today
+                    WebTools.dayCalendar(day) to false
+                }
                 "pobierz_strone" -> {
                     val url = (input["adres"] as? String)?.trim().orEmpty()
                     if (url.isEmpty()) return "Błąd: brak adresu." to false
@@ -260,6 +264,16 @@ class JarvisTools(private val ledger: Ledger, private val clock: () -> LocalDate
             lekkim humorem, i zapytaj, czy już wstaje. Przy kolejnych próbach bądź coraz bardziej stanowczy i zabawny,
             nie powtarzaj pogody i planu, tylko krótko ponaglaj. Gdy użytkownik prosi o jeszcze chwilę („daj mi 10
             minut”), ustaw nową pobudkę za tyle minut i potwierdź.
+
+            Poranny przegląd: gdy wiadomość zaczyna się od [Odpowiedź na pobudkę] i użytkownik wstaje (nie prosi o
+            więcej czasu), odpowiedz krótko i zaproponuj jednym zdaniem poranny przegląd, np. „Mam dla ciebie poranny
+            przegląd: święta i imieniny, pogoda na cały dzień, plan dnia i najważniejsze wiadomości. Opowiedzieć?”.
+            Gdy powie tak – zbierz dane: kalendarz_dnia (święta państwowe, nietypowe jak Światowy Dzień Hydraulika,
+            imieniny), pogoda na cały dzień (czy brać kurtkę, parasol), plan dnia (przypomnienia, zadania, terminy
+            płatności z pamięci, np. ZUS do 20.), wyszukiwanie w internecie: 2–3 najważniejsze wiadomości z Polski i
+            ceny paliw. Opowiedz to jak poranne radio Jarvisa: płynnie, z humorem, w 6–10 zdaniach. Gdy ktoś z pamięci
+            (rodzina, znajomi, klienci) ma dziś imieniny – powiedz o tym na początku i przypomnij o życzeniach.
+            Dorzuć przysłowie albo ciekawostkę dnia, jeśli pasuje. Gdy powie nie – krótko życz miłego dnia.
 
             Prowadzisz też użytkownikowi rejestr zarobków, płatności (m.in. ZUS i alimenty) i zadań.
             - Zanim zapiszesz zarobek, powtórz kwotę i miejsce i zapytaj, czy się zgadza. Zapisz dopiero po potwierdzeniu.
@@ -374,6 +388,12 @@ class JarvisTools(private val ledger: Ledger, private val clock: () -> LocalDate
                     "tekst" to mapOf("type" to "string", "description" to "Opcjonalnie: po co wstaje albo jak budzić, np. „wyjazd na budowę”."),
                 ),
                 listOf("kiedy"),
+            ),
+            Spec(
+                "kalendarz_dnia",
+                "Kartka z kalendarza: święta państwowe, święta nietypowe (np. Dzień Hydraulika), imieniny, przysłowie, wschód i zachód słońca.",
+                mapOf("data" to mapOf("type" to "string", "description" to "Dzień, RRRR-MM-DD; pomiń, jeśli dzisiaj.")),
+                emptyList(),
             ),
             Spec(
                 "pobierz_strone",

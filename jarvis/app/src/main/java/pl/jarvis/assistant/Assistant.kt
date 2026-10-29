@@ -98,6 +98,9 @@ object Assistant {
     private val wakeAgain = Runnable { wakeUp() }
     private var awake: PowerManager.WakeLock? = null
 
+    /** Jarvis zaproponował poranny przegląd – „nie” kończy rozmowę. */
+    private var morningOffer = false
+
     /** Głośność budzika sprzed pobudki – wraca po niej (null = nie zmienialiśmy). */
     private var alarmVolumeBefore: Int? = null
 
@@ -396,9 +399,15 @@ object Assistant {
 
     private fun handleText(text: String) {
         // Odezwał się – pobudka zrobiła swoje (o „jeszcze 10 minut” zadba AI, ustawiając nową).
+        val wakeReply = waking != null
         stopWaking()
         addMessage(ChatMessage(true, text))
         if (END_PHRASES.containsMatchIn(text.lowercase())) conversation = false
+        // Odmowa porannego przeglądu – Jarvis żegna się i kończy pobudkę.
+        if (morningOffer && NO_PHRASES.containsMatchIn(text.lowercase())) conversation = false
+        morningOffer = wakeReply
+        // AI musi wiedzieć, że to odpowiedź na pobudkę – wtedy proponuje poranny przegląd.
+        val forAi = if (wakeReply) "[Odpowiedź na pobudkę] $text" else text
         setState(AssistantState.THINKING)
         val brain = ai
         if (brain == null) {
@@ -418,7 +427,7 @@ object Assistant {
                         handler.post { if (state.value == AssistantState.THINKING) speakAside("Chwileczkę, przepisuję rozmowę.") }
                     }
                 }
-                val result = brain.handle(text) {
+                val result = brain.handle(forAi) {
                     if (!announced) {
                         announced = true
                         handler.post { if (state.value == AssistantState.THINKING) speakAside("Chwileczkę, sprawdzam.") }
@@ -628,6 +637,9 @@ object Assistant {
         startListening(isFollowUp = followUp, delayMs = if (freshRecognizer) 400 else 100, isRetry = true)
         return true
     }
+
+    /** Odmowa („nie”, „nie trzeba”, „nie teraz”) – po porannej propozycji kończy rozmowę. */
+    private val NO_PHRASES = Regex("^(nie|nie trzeba|nie teraz|nie dzięki|nie dziękuję|daj spokój|później|potem)\\b")
 
     /** Zwroty kończące rozmowę – po odpowiedzi Jarvis przestaje słuchać. */
     private val END_PHRASES = Regex("^(dzięki|dziękuję|dzieki|dziekuje|to wszystko|koniec|stop|nic|nieważne|niewazne|na razie)\\b")
