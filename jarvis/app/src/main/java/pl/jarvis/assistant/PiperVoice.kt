@@ -55,12 +55,19 @@ object PiperVoice {
      */
     private fun marker(context: Context, name: String) = File(context.filesDir, "voices/$name.marker")
 
+    /** Znaczniki zostawione przez starszą wersję (z błędem, który już naprawiono) pomijamy. */
+    private const val MARKER_VERSION = "13"
+
+    private fun crashedHere(file: File) = file.exists() && runCatching { file.readText() }.getOrNull() == MARKER_VERSION
+
+    private fun setMarker(file: File) = file.apply { parentFile?.mkdirs(); writeText(MARKER_VERSION) }
+
     /** Przy starcie aplikacji: wczytuje głos, jeśli jest już pobrany (i wcześniej nie wywrócił aplikacji). */
     fun prepare(context: Context) {
         val ctx = context.applicationContext
         appContext = ctx
         if (tts != null || status.value == Status.LOADING || status.value == Status.DOWNLOADING) return
-        val crashed = listOf("loading", "speaking").firstOrNull { marker(ctx, it).exists() }
+        val crashed = listOf("loading", "speaking").firstOrNull { crashedHere(marker(ctx, it)) }
         when {
             crashed != null -> {
                 error.value = if (crashed == "loading") "wczytanie głosu zamknęło aplikację" else "mówienie głosem zamknęło aplikację"
@@ -102,7 +109,7 @@ object PiperVoice {
 
     private fun load(context: Context) {
         status.value = Status.LOADING
-        val loading = marker(context, "loading").apply { parentFile?.mkdirs(); createNewFile() }
+        val loading = setMarker(marker(context, "loading"))
         try {
             val d = dir(context).path
             tts = OfflineTts(
@@ -159,19 +166,12 @@ object PiperVoice {
                 .setTransferMode(AudioTrack.MODE_STREAM)
                 .build()
             track = out
-            var written = 0L
-            val speaking = appContext?.let { marker(it, "speaking") }?.apply { createNewFile() }
+            val speaking = appContext?.let { setMarker(marker(it, "speaking")) }
             try {
                 out.play()
-                engine.generateWithCallback(forSpeech(text), 0, 1.0f) { samples ->
-                    if (gen != generation) {
-                        0
-                    } else {
-                        out.write(samples, 0, samples.size, AudioTrack.WRITE_BLOCKING)
-                        written += samples.size
-                        1
-                    }
-                }
+                val sink = Sink(gen, out)
+                engine.generateWithCallback(forSpeech(text), 0, 1.0f, sink)
+                val written = sink.written
                 // Czekamy, aż wybrzmi to, co jeszcze jest w buforze.
                 while (gen == generation && out.playbackHeadPosition < written) Thread.sleep(20)
             } catch (_: Exception) {
@@ -184,6 +184,22 @@ object PiperVoice {
                 // Przerwana wypowiedź nie zgłasza końca – stan ustawił już ten, kto ją przerwał.
                 if (gen == generation) main.post(onDone)
             }
+        }
+    }
+
+    /**
+     * Odbiera kolejne fragmenty dźwięku z syntezatora i od razu je gra.
+     * Musi to być osobna klasa, nie lambda: biblioteka (JNI) szuka metody `invoke(float[]): Integer`,
+     * a lambdy w Kotlinie 2 mają tylko ogólne `invoke(Object)` – stąd wcześniejsza awaria aplikacji.
+     */
+    private class Sink(private val gen: Int, private val out: AudioTrack) : (FloatArray) -> Int {
+        var written = 0L
+
+        override fun invoke(samples: FloatArray): Int {
+            if (gen != generation) return 0
+            out.write(samples, 0, samples.size, AudioTrack.WRITE_BLOCKING)
+            written += samples.size
+            return 1
         }
     }
 
