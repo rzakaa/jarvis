@@ -24,6 +24,29 @@ if (-not (& $adb devices | Select-String "emulator-")) {
     do { Start-Sleep 2 } until ("$(& $adb shell getprop sys.boot_completed)".Trim() -eq "1")
 }
 
+# Norton podmienia HTTPS na tym komputerze - emulator musi ufac jego certyfikatowi,
+# inaczej nie dziala rozpoznawanie mowy Google, AI ani pobieranie glosu. Dziala do restartu emulatora.
+$norton = Get-ChildItem Cert:\LocalMachine\Root, Cert:\CurrentUser\Root | Where-Object Subject -like "*Norton Web/Mail Shield Root*" | Select-Object -First 1
+$openssl = "C:\Program Files\Git\usr\bin\openssl.exe"
+if ($norton -and (Test-Path $openssl)) {
+    $pem = "$env:TEMP\norton_root.pem"
+    "-----BEGIN CERTIFICATE-----`n" + [Convert]::ToBase64String($norton.RawData, 'InsertLineBreaks') + "`n-----END CERTIFICATE-----" | Set-Content $pem -Encoding ascii
+    $hash = "$(& $openssl x509 -in $pem -noout -subject_hash_old)".Trim()
+    & $adb root | Out-Null
+    Start-Sleep 2
+    & $adb wait-for-device
+    $zygote = "$(& $adb shell pidof zygote64)".Trim()
+    $present = "$(& $adb shell "nsenter --mount=/proc/$zygote/ns/mnt -- ls /apex/com.android.conscrypt/cacerts/$hash.0 2>/dev/null")".Trim()
+    if (-not $present) {
+        Write-Host "== Dodaje certyfikat Nortona do emulatora ==" -ForegroundColor Cyan
+        & $adb push $pem "/data/local/tmp/$hash.0" | Out-Null
+        & $adb push "$PSScriptRoot\narzedzia\ca-systemowy.sh" /data/local/tmp/ca-systemowy.sh | Out-Null
+        & $adb shell sh /data/local/tmp/ca-systemowy.sh "/data/local/tmp/$hash.0"
+        & $adb shell am force-stop com.google.android.tts
+        & $adb shell am force-stop com.google.android.googlequicksearchbox
+    }
+}
+
 Write-Host "== Buduje i instaluje Jarvisa ==" -ForegroundColor Cyan
 .\gradlew installDebug
 if ($LASTEXITCODE -ne 0) { Write-Host "Budowanie nie wyszlo - wklej Claude'owi to, co wyzej." -ForegroundColor Red; exit 1 }

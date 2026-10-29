@@ -19,6 +19,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
 import android.os.Process
+import android.util.Log
 import kotlinx.coroutines.flow.update
 import pl.jarvis.MainActivity
 import pl.jarvis.assistant.Assistant
@@ -186,6 +187,8 @@ class RecorderService : Service() {
 
                 val db = levelDb(frame, frame.size)
                 if (++frameCounter % 3 == 0) RecorderState.levelDb.value = db
+                // Diagnostyka (adb logcat -s JarvisMic): poziom i wynik detektora co ok. 1 s.
+                if (frameCounter % 33 == 0) Log.d("JarvisMic", "db=%.1f wake=%.3f".format(db, wakePeak))
                 if (wakeWord != null) {
                     if (wakeWord.process(frame)) mainHandler.post { Assistant.onWakeWord() }
                     // Podgląd: szczyt wyniku, powoli opadający (żeby dało się go odczytać na ekranie).

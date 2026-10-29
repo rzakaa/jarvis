@@ -207,10 +207,11 @@ object Assistant {
             .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "pl-PL")
             .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             .putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-            // Dłużej czekamy na początek i koniec wypowiedzi (część usług to respektuje).
-            .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
-            .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L)
-            .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 2000L)
+            // Dłużej czekamy na początek i koniec wypowiedzi. Usługa Google czyta te wartości
+            // jako Integer – podane jako Long są po cichu ignorowane.
+            .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500)
+            .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1200)
+            .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 2000)
         partial.value = ""
         setState(AssistantState.LISTENING)
         // Chwila dla rejestratora na oddanie mikrofonu (i na wybrzmienie naszego sygnału).
