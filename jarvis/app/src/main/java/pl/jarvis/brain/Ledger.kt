@@ -37,6 +37,9 @@ class Ledger {
     fun pendingReminders() = reminders.filter { !it.done }.sortedBy { it.at }
 
     @Synchronized
+    fun allReminders() = reminders.toList()
+
+    @Synchronized
     fun markReminderDone(id: Long) {
         val i = reminders.indexOfFirst { it.id == id }
         if (i >= 0) reminders[i] = reminders[i].copy(done = true)

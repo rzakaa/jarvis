@@ -57,10 +57,15 @@ class JarvisTools(private val ledger: Ledger, private val clock: () -> LocalDate
             "#${it.id} ${it.at.toLocalDate()} ${"%02d:%02d".format(it.at.hour, it.at.minute)} " +
                 (if (it.wake) "pobudka" else "przypomnienie") + (if (it.text.isNotBlank()) ": ${it.text}" else "")
         }.ifEmpty { "brak" }
+        // Co już zadzwoniło w ostatniej dobie – żeby na „czemu nie obudziłeś” odpowiadać zgodnie z prawdą.
+        val played = ledger.allReminders().filter { it.done && it.at.isAfter(now.minusDays(1)) }.sortedBy { it.at }
+            .joinToString("; ") {
+                "${it.at.toLocalDate()} ${"%02d:%02d".format(it.at.hour, it.at.minute)} " + (if (it.wake) "pobudka" else "przypomnienie")
+            }.ifEmpty { "nic" }
         return "[Stan Jarvisa – teraz $today ${"%02d:%02d".format(now.hour, now.minute)}, ${Polish.dayName(today)}. " +
             "Zarobki ${Polish.inMonth(month, today)}: ${Polish.formatMoney(incomes.sumOf { it.grosze })} " +
             "(${incomes.size} wpłat). Płatności za bieżący miesiąc: $payments. Otwarte zadania: $notes. " +
-            "Przypomnienia i pobudki: $reminders. Pamięć o użytkowniku: $memory.]" + freshConversations()
+            "Przypomnienia i pobudki: $reminders. Odegrane w ostatniej dobie: $played. Pamięć o użytkowniku: $memory.]" + freshConversations()
     }
 
     /** Tekst rozmów nagranych przed chwilą – każda tylko raz, żeby Jarvis odpowiadał o nich od razu. */
@@ -264,6 +269,13 @@ class JarvisTools(private val ledger: Ledger, private val clock: () -> LocalDate
             lekkim humorem, i zapytaj, czy już wstaje. Przy kolejnych próbach bądź coraz bardziej stanowczy i zabawny,
             nie powtarzaj pogody i planu, tylko krótko ponaglaj. Gdy użytkownik prosi o jeszcze chwilę („daj mi 10
             minut”), ustaw nową pobudkę za tyle minut i potwierdź.
+
+            Prawdomówność: nigdy nie twierdź, że coś się wydarzyło (pobudka zadzwoniła, przypomnienie padło, coś
+            zapisano), jeśli nie widać tego w stanie Jarvisa („Odegrane w ostatniej dobie”) albo w wynikach narzędzi.
+            Pobudka albo przypomnienie zadzwoniło tylko wtedy, gdy na liście odegranych jest wpis z tym dniem i godziną;
+            najpierw sprawdź listę, potem odpowiadaj – zaczynając od właściwego „tak” albo „nie”.
+            Gdy czegoś nie wiesz – powiedz wprost. Prośba o obudzenie to zawsze ustaw_pobudke, a o przypomnienie –
+            ustaw_przypomnienie; zwykłe zadanie (dodaj_zadanie) nikogo nie budzi i o niczym samo nie przypomina.
 
             Poranny przegląd: gdy wiadomość zaczyna się od [Odpowiedź na pobudkę] i użytkownik wstaje (nie prosi o
             więcej czasu), odpowiedz krótko i zaproponuj jednym zdaniem poranny przegląd, np. „Mam dla ciebie poranny
