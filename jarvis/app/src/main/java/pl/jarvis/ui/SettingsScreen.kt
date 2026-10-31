@@ -74,7 +74,7 @@ fun SettingsScreen() {
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item { HudLabel("opcje · wersja 0.38", color = Hud.Cyan, size = 13.sp) }
+        item { HudLabel("opcje · wersja 0.39", color = Hud.Cyan, size = 13.sp) }
 
         item {
             HudPanel(modifier = Modifier.fillMaxWidth(), title = "sztuczna inteligencja") {
@@ -316,7 +316,7 @@ private fun AzurePanel() {
     )
     HudButton("zapisz i posłuchaj", filled = true, onClick = {
         Prefs.saveAzure(context, key, region, voiceName)
-        CloudVoice.speak(context, "Dzień dobry, szefie. Tu Jarvis, do usług.", onDone = {}, fallback = {})
+        CloudVoice.speak(context, "Siema, tu Jarvis. Tak teraz brzmię.", onDone = {}, fallback = {})
     })
     Hint(
         "Klucz: portal.azure.com → Utwórz zasób → „Speech” (Usługi mowy) → warstwa cenowa Free F0, region np. Germany West Central " +

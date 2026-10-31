@@ -61,7 +61,7 @@ class Brain(
             DATE.containsMatchIn(text) ->
                 Reply("Dziś ${Polish.dayName(today)}, ${Polish.dayAndMonth(today)} ${today.year}.")
             HELP.containsMatchIn(text) -> Reply(HELP_TEXT)
-            THANKS.containsMatchIn(text) -> Reply("Do usług.")
+            THANKS.containsMatchIn(text) -> Reply("Spoko, nie ma sprawy.")
             HOW_ARE_YOU.containsMatchIn(text) -> Reply("Wszystkie systemy działają. Dzięki, że pytasz.")
             PRESENCE.containsMatchIn(text) -> Reply("Jestem. W czym mogę pomóc?")
             GREETING.containsMatchIn(text) -> Reply("Cześć! W czym mogę pomóc?")

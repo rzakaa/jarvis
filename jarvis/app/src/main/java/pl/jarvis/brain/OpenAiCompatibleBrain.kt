@@ -121,7 +121,7 @@ class OpenAiCompatibleBrain(
         val body = MAPPER.createObjectNode().put("model", model).put("max_tokens", 2048)
         body.putArray("messages").add(message("system", system)).add(message("user", user))
         body.set<ObjectNode>("response_format", MAPPER.createObjectNode().put("type", "json_object"))
-        if (base.contains("moonshot")) body.set<ObjectNode>("thinking", MAPPER.createObjectNode().put("type", "disabled"))
+        if (base.contains("moonshot") && noThinking(model)) body.set<ObjectNode>("thinking", MAPPER.createObjectNode().put("type", "disabled"))
         return post("/chat/completions", body).path("choices").path(0).path("message").path("content").asText("")
     }
 
@@ -220,10 +220,9 @@ class OpenAiCompatibleBrain(
                 ),
             )
         }
-        // Kimi (Moonshot) ma wbudowane wyszukiwanie w internecie. „Myślenie” wyłączamy:
-        // w rozmowie głosowej odpowiedź jest 2–3× szybsza, a jakość prostych odpowiedzi ta sama.
+        // Kimi (Moonshot) ma wbudowane wyszukiwanie w internecie.
         if (base.contains("moonshot")) {
-            body.set<ObjectNode>("thinking", MAPPER.createObjectNode().put("type", "disabled"))
+            if (noThinking(model)) body.set<ObjectNode>("thinking", MAPPER.createObjectNode().put("type", "disabled"))
             toolArray.add(
                 MAPPER.createObjectNode().put("type", "builtin_function")
                     .set<ObjectNode>("function", MAPPER.createObjectNode().put("name", "\$web_search")),
@@ -236,6 +235,13 @@ class OpenAiCompatibleBrain(
 
     companion object {
         const val KIMI_BASE_URL = "https://api.moonshot.ai/v1"
+
+        /**
+         * „Myślenie” wyłączamy tylko w k2.x – tam odpowiedź jest 2–3× szybsza, a narzędzia działają (12/12 w teście).
+         * Modele k3 bez myślenia pomijają narzędzia (mówią „zapamiętane”, nic nie zapisując: 3–6/12), a z
+         * myśleniem trafiają 12/12 i nadal odpowiadają w ok. 3,5 s.
+         */
+        private fun noThinking(model: String) = !model.startsWith("kimi-k3")
 
         /** Model kończący odpowiedź po wyszukiwaniu w internecie (k3 tego nie umie). */
         private const val SEARCH_MODEL = "kimi-k2.6"

@@ -86,7 +86,7 @@ object Assistant {
     private var greeting = false
 
     /** Krótkie odzewy na „Hey Jarvis”. */
-    private val GREETINGS = listOf("Słucham?", "Tak?", "Do usług.", "Słucham, szefie.")
+    private val GREETINGS = listOf("No?", "Słucham.", "Dawaj.", "Co tam?", "Mów.")
 
     /** Ile razy po cichu ponowiliśmy słuchanie po „Hey Jarvis”, gdy nic nie usłyszało. */
     private var retries = 0
@@ -255,7 +255,7 @@ object Assistant {
         val reason = w.text.takeIf { it.isNotBlank() }?.let { ", powód / uwagi: $it" }.orEmpty()
         speakFromAi(
             "[POBUDKA – jest ${clock(now)}, próba $wakeAttempt z $MAX_WAKE_ATTEMPTS$reason. Obudź użytkownika.]",
-            if (wakeAttempt == 1) "Dzień dobry. Jest ${clock(now)}, pora wstawać." else "Pobudka, szefie! Jest ${clock(now)}.",
+            if (wakeAttempt == 1) "Dzień dobry. Jest ${clock(now)}, pora wstawać." else "Pobudka, stary! Jest ${clock(now)}.",
             alarm = true,
         )
     }
