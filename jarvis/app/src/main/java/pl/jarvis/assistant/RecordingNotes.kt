@@ -5,10 +5,12 @@ import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 import pl.jarvis.brain.Polish
+import pl.jarvis.recorder.NO_AUDIO
 import pl.jarvis.recorder.Prefs
 import pl.jarvis.recorder.RecorderState
 import pl.jarvis.recorder.Recordings
 import pl.jarvis.recorder.Transcriber
+import pl.jarvis.recorder.sibling
 import java.io.File
 import java.time.Instant
 import java.time.LocalDate
@@ -130,7 +132,8 @@ object RecordingNotes {
         val out = StringBuilder()
         var day = from
         while (!day.isAfter(to)) {
-            File(root, day.toString()).listFiles().orEmpty().filter { it.extension == "wav" }.sortedBy { it.name }.forEach { wav ->
+            File(root, day.toString()).listFiles().orEmpty().filter { it.extension == "wav" || it.extension == NO_AUDIO }
+                .map { sibling(it, "wav") }.distinct().sortedBy { it.name }.forEach { wav ->
                 val summary = summaryOf(wav).takeIf { it.exists() }?.let { runCatching { JSONObject(it.readText()) }.getOrNull() }
                 val transcript = Transcriber.transcriptOf(wav).takeIf { it.exists() }?.readText().orEmpty()
                 val haystack = (summary?.toString().orEmpty() + " " + transcript).lowercase()
@@ -187,8 +190,8 @@ object RecordingNotes {
     fun read(context: Context, day: LocalDate, time: String): String {
         val dir = File(context.filesDir, "recordings/$day")
         val prefix = time.trim().replace(':', '-')
-        val wav = dir.listFiles().orEmpty().filter { it.extension == "wav" && it.nameWithoutExtension.startsWith(prefix) }
-            .minByOrNull { it.name } ?: return "Nie ma nagrania z $day o $time."
+        val wav = dir.listFiles().orEmpty().filter { (it.extension == "wav" || it.extension == NO_AUDIO) && it.nameWithoutExtension.startsWith(prefix) }
+            .map { sibling(it, "wav") }.minByOrNull { it.name } ?: return "Nie ma nagrania z $day o $time."
         val text = Transcriber.transcriptOf(wav).takeIf { it.exists() }?.readText()
             ?: return "Nagranie z $day ${wav.nameWithoutExtension.replace('-', ':')} nie jest jeszcze przepisane."
         return "Nagranie $day ${wav.nameWithoutExtension.replace('-', ':')} (automatyczna transkrypcja, może mieć błędy):\n" +

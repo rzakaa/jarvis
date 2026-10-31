@@ -13,6 +13,7 @@ import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.graphics.drawable.Icon
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioRecord
 import android.os.Build
 import android.os.Handler
@@ -157,8 +158,12 @@ class RecorderService : Service() {
         val segmenter = Segmenter(object : Segmenter.Sink {
             private var writer: WavWriter? = null
             private var file: File? = null
+            private val audio = getSystemService(AudioManager::class.java)
+            private var inCall = false
+            private var frames = 0
 
             override fun startSegment() {
+                inCall = false
                 val newFile = Recordings.newFile(this@RecorderService, LocalDateTime.now())
                 RecorderState.activeFile.value = newFile
                 file = newFile
@@ -170,6 +175,11 @@ class RecorderService : Service() {
             override fun write(frame: ShortArray) {
                 writer?.write(frame, frame.size)
                 Transcriber.liveWrite(frame)
+                // Trwa połączenie w tym telefonie (zwykłe albo z komunikatora) – nagranie to rozmowa telefoniczna.
+                if (!inCall && ++frames % 33 == 0) {
+                    val mode = audio?.mode
+                    inCall = mode == AudioManager.MODE_IN_CALL || mode == AudioManager.MODE_IN_COMMUNICATION
+                }
             }
 
             override fun finishSegment(keep: Boolean) {
@@ -180,6 +190,8 @@ class RecorderService : Service() {
                 if (!keep) {
                     file?.delete()
                     RecorderState.discarded.update { it + 1 }
+                } else if (inCall) {
+                    file?.let { runCatching { sibling(it, CALL).createNewFile() } }
                 }
                 file = null
                 Transcriber.liveFinish(keep)

@@ -164,6 +164,8 @@ object Transcriber {
             } else if (batteryAllows(ctx)) {
                 runPending(ctx)
             }
+            // Co 10 minut sprzątamy stary dźwięk (sam tekst zostaje).
+            runCatching { Recordings.cleanup(ctx) }
         }, 10, 600, TimeUnit.SECONDS)
     }
 
@@ -225,7 +227,7 @@ object Transcriber {
 
     /** Nagrania bez tekstu, od najnowszego (o nie pyta się najczęściej); pomijamy to, które się nagrywa. */
     private fun waiting(context: Context): List<File> =
-        Recordings.list(context).map { it.file }.filter { !transcriptOf(it).exists() && it !in liveFiles }
+        Recordings.list(context).filter { it.hasAudio }.map { it.file }.filter { !transcriptOf(it).exists() && it !in liveFiles }
 
     /** Rejestrator zaczął nagranie – przepisujemy je w trakcie (jeśli jest model i bateria pozwala). */
     fun liveStart(context: Context, wav: File) {

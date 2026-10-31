@@ -98,7 +98,7 @@ fun RecordingsScreen() {
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item { HudLabel("rejestrator rozmów · wersja 0.40", color = Hud.Cyan, size = 13.sp) }
+        item { HudLabel("rejestrator rozmów · wersja 0.41", color = Hud.Cyan, size = 13.sp) }
         item { StatusPanel(status, onToggle) }
         item { SettingsPanel(status) }
         error?.let { message -> item { Text(message, color = Hud.Red, fontSize = 14.sp) } }
@@ -213,7 +213,8 @@ private fun TranscriptionPanel() {
         Text(
             "Tekst powstaje w telefonie, za darmo – samo nagranie nigdy go nie opuszcza. Model pobiera się sam na Wi-Fi, a nagrania przepisuję zaraz po zakończeniu (przy ładowaniu albo od 40% baterii). " +
                 "Gdy zapytasz o rozmowę, Jarvis szuka w tekstach i wysyła do AI tylko pasujące fragmenty. " +
-                "Skróty AI (kosztują tokeny) dodatkowo same wyłapują zadania z każdej rozmowy.",
+                "Skróty AI (kosztują tokeny) dodatkowo same wyłapują zadania z każdej rozmowy. " +
+                "Dźwięk znika sam po przepisaniu: nasłuch po 7 dniach, rozmowy telefoniczne po 30 – tekst zostaje na zawsze.",
             color = Hud.TextDim,
             fontSize = 12.sp,
             modifier = Modifier.padding(top = 6.dp),
@@ -362,7 +363,9 @@ private fun RecordingRow(
                 val preview = recording.summary ?: recording.transcript?.take(140)
                 if (!preview.isNullOrBlank()) Text(preview, color = Hud.TextDim, fontSize = 13.sp, maxLines = 3)
             }
-            HudButton(if (isPlaying) "stop" else "▶", onClick = onPlay, accent = if (isPlaying) Hud.Amber else Hud.Cyan)
+            // Po kilku dniach dźwięk znika (zostaje tekst) – wtedy nie ma czego odtwarzać.
+            if (recording.hasAudio) HudButton(if (isPlaying) "stop" else "▶", onClick = onPlay, accent = if (isPlaying) Hud.Amber else Hud.Cyan)
+            else HudLabel("sam tekst")
             HudButton("✕", onClick = onDelete, accent = Hud.Red, modifier = Modifier.padding(start = 8.dp))
         }
     }
