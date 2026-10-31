@@ -126,7 +126,10 @@ class OpenAiCompatibleBrain(
         const val KIMI_BASE_URL = "https://api.moonshot.ai/v1"
 
         private val MAPPER = ObjectMapper()
+        // Domyślne 10 s czekania na pierwszy bajt to za mało: z wyszukiwaniem w internecie Kimi milczy dłużej.
         private val HTTP = OkHttpClient.Builder()
+            .connectTimeout(Duration.ofSeconds(15))
+            .readTimeout(Duration.ofSeconds(80))
             .callTimeout(Duration.ofSeconds(90))
             .build()
 
