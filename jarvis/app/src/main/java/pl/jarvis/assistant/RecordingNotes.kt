@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
+import pl.jarvis.brain.Polish
 import pl.jarvis.recorder.Prefs
 import pl.jarvis.recorder.RecorderState
 import pl.jarvis.recorder.Recordings
@@ -11,6 +12,7 @@ import pl.jarvis.recorder.Transcriber
 import java.io.File
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -46,6 +48,69 @@ object RecordingNotes {
         Assistant.importFromRecording(tasks.map { "$it (z rozmowy $day $hour)" }, facts)
         RecorderState.recordingsChanged()
     }
+
+    /**
+     * Obietnice użytkownika z rozmowy (oferta, wyjazd do klienta, telefon) → przypomnienia. Do AI idzie tylko
+     * rozmowa, w której padły słowa typu „jutro”, „przyjadę”, „oferta” – reszta nie kosztuje nic.
+     */
+    fun commitments(context: Context, wav: File, transcript: String) {
+        val text = transcript.trim()
+        if (text.length < 60 || !PROMISE_HINT.containsMatchIn(text.lowercase())) return
+        val brain = Assistant.buildBrain(Prefs.assistantSettings(context), Assistant.ledger) ?: return
+        val day = runCatching { LocalDate.parse(wav.parentFile?.name) }.getOrNull() ?: LocalDate.now()
+        val time = runCatching { LocalTime.parse(wav.nameWithoutExtension, fileTime) }.getOrNull() ?: LocalTime.now()
+        val reply = runCatching {
+            brain.completeJson(
+                COMMITMENTS,
+                "Rozmowa nagrana ${Polish.dayName(day)} $day o ${"%02d:%02d".format(time.hour, time.minute)}.\n\nTranskrypcja:\n${mask(text).take(12_000)}",
+            )
+        }.getOrElse {
+            Log.w(TAG, "obietnice: ${it.message}")
+            return
+        }
+        val items = runCatching { JSONObject(reply.substring(reply.indexOf('{').coerceAtLeast(0))).optJSONArray("zobowiazania") }
+            .getOrNull() ?: return
+        val now = LocalDateTime.now()
+        val source = "%02d.%02d %02d:%02d".format(day.dayOfMonth, day.monthValue, time.hour, time.minute)
+        for (i in 0 until minOf(items.length(), 3)) {
+            val o = items.optJSONObject(i) ?: continue
+            val what = o.optString("co").trim().takeIf { it.isNotEmpty() } ?: continue
+            val who = o.optString("kto").trim()
+            val where = o.optString("gdzie").trim()
+            val trip = o.optString("rodzaj") == "wyjazd"
+            val whenText = o.optString("kiedy").trim().takeIf { it.isNotEmpty() && it != "null" }
+            // Z godziną: wyjazd – godzinę wcześniej (dojazd), reszta – o czasie. Sam dzień: rano. Bez terminu: jutro 9:00.
+            val at = whenText?.let { w ->
+                runCatching { LocalDateTime.parse(w).let { if (trip) it.minusHours(1) else it } }.getOrNull()
+                    ?: runCatching { LocalDate.parse(w.take(10)).atTime(if (trip) 7 else 9, 0) }.getOrNull()
+            } ?: now.toLocalDate().plusDays(1).atTime(9, 0)
+            if (at.isBefore(now)) continue
+            val details = listOf(who, where).filter { it.isNotEmpty() }.joinToString(", ")
+            val reminder = "[z rozmowy $source] $what" + (if (details.isNotEmpty()) " ($details)." else ".")
+            Assistant.addFromRecording(at, reminder, if (whenText == null) "$what (z rozmowy $source)" else null)
+        }
+        Log.d(TAG, "${wav.name}: obietnic ${items.length()}")
+    }
+
+    /** Słowa, po których w rozmowie zwykle pada obietnica albo termin. */
+    private val PROMISE_HINT = Regex(
+        "jutr|pojutrz|poniedzia|wtor|środ|czwart|piąt|sobot|niedziel|tydzie|godzin|o \\d|na \\d|przyjad|przyjed|podjad|" +
+            "wpadn|zadzwoni|oddzwoni|wyśl|wysł|ofert|wycen|kosztorys|obiec|umów|umawia|przywio|termin|adres|faktur|zaliczk|zrobi",
+    )
+
+    private val COMMITMENTS = """
+        Jesteś Jarvis, asystent użytkownika (fachowiec, pracuje u klientów). Dostajesz automatyczną transkrypcję rozmowy
+        (często rozmowy telefonicznej, słychać tylko użytkownika; mogą być błędy rozpoznawania). Wypisz WYŁĄCZNIE to, co
+        użytkownik obiecał albo z czym się umówił: wysłać ofertę lub wycenę, przyjechać do kogoś, oddzwonić, coś przywieźć,
+        zrobić, zapłacić. Zwróć JSON:
+        {"zobowiazania": [{"co": "krótko, w drugiej osobie, np. „Wyślij ofertę na łazienkę”",
+          "kto": "komu (imię, firma, „klient z Zabrza”) albo pusty",
+          "gdzie": "adres lub miejsce, jeśli padło, albo pusty",
+          "kiedy": "RRRR-MM-DDTGG:MM gdy padła godzina, RRRR-MM-DD gdy tylko dzień, pusty gdy bez terminu",
+          "rodzaj": "wyjazd | oferta | telefon | inne"}]}
+        Zasady: dni typu „jutro”, „w piątek” licz od daty nagrania; nie wymyślaj; pomiń luźne gadanie, telewizję,
+        cudze plany i rzeczy już zrobione. Gdy nic takiego nie ma – {"zobowiazania": []}.
+    """.trimIndent()
 
     /** PESEL, numery kart i kont nie wychodzą z telefonu. */
     fun mask(text: String) = text

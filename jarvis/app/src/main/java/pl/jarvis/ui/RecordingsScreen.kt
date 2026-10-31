@@ -98,7 +98,7 @@ fun RecordingsScreen() {
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item { HudLabel("rejestrator rozmów · wersja 0.39", color = Hud.Cyan, size = 13.sp) }
+        item { HudLabel("rejestrator rozmów · wersja 0.40", color = Hud.Cyan, size = 13.sp) }
         item { StatusPanel(status, onToggle) }
         item { SettingsPanel(status) }
         error?.let { message -> item { Text(message, color = Hud.Red, fontSize = 14.sp) } }
@@ -197,6 +197,19 @@ private fun TranscriptionPanel() {
             HudChip("wyłączone", !summaries, onClick = { summaries = false; Prefs.setAutoSummaries(context, false) })
             HudChip("włączone", summaries, onClick = { summaries = true; Prefs.setAutoSummaries(context, true) })
         }
+        var promises by remember { mutableStateOf(Prefs.commitments(context)) }
+        HudLabel("przypominanie obietnic z rozmów", modifier = Modifier.padding(top = 10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 6.dp)) {
+            HudChip("wyłączone", !promises, onClick = { promises = false; Prefs.setCommitments(context, false) })
+            HudChip("włączone", promises, onClick = { promises = true; Prefs.setCommitments(context, true) })
+        }
+        Text(
+            "Gdy w rozmowie obiecasz ofertę, wyjazd do klienta czy telefon, Jarvis ustawi przypomnienie (wyjazd – godzinę " +
+                "wcześniej, bez terminu – jutro o 9). Do AI idą tylko rozmowy ze słowami typu „jutro”, „przyjadę”, „oferta”.",
+            color = Hud.TextDim,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(top = 6.dp),
+        )
         Text(
             "Tekst powstaje w telefonie, za darmo – samo nagranie nigdy go nie opuszcza. Model pobiera się sam na Wi-Fi, a nagrania przepisuję zaraz po zakończeniu (przy ładowaniu albo od 40% baterii). " +
                 "Gdy zapytasz o rozmowę, Jarvis szuka w tekstach i wysyła do AI tylko pasujące fragmenty. " +

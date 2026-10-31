@@ -164,6 +164,11 @@ object Prefs {
 
     fun setAutoSummaries(context: Context, value: Boolean) = prefs(context).edit().putBoolean(AUTO_SUMMARIES, value).apply()
 
+    /** Wyłapywanie obietnic z rozmów (oferta, wyjazd, telefon) i przypominanie o nich. */
+    fun commitments(context: Context) = prefs(context).getBoolean("commitments", true)
+
+    fun setCommitments(context: Context, value: Boolean) = prefs(context).edit().putBoolean("commitments", value).apply()
+
     /** Który głos Piper (np. „jarvis_wg_glos-medium”); null = domyślny. */
     fun piperVoiceId(context: Context): String? = prefs(context).getString(PIPER_VOICE_ID, null)
 

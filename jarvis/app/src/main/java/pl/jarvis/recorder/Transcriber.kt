@@ -139,11 +139,22 @@ object Transcriber {
         if (ctx.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
             val receiver = object : BroadcastReceiver() {
                 override fun onReceive(c: Context, intent: Intent) {
-                    if (intent.action == "pl.jarvis.DEBUG_ASK") intent.getStringExtra("tekst")?.let { Assistant.submitText(it) }
-                    else runPending(ctx)
+                    when (intent.action) {
+                        "pl.jarvis.DEBUG_ASK" -> intent.getStringExtra("tekst")?.let { Assistant.submitText(it) }
+                        // DEBUG_PROMISE --es tekst "…" – udawana rozmowa sprzed chwili, do testu wyłapywania obietnic.
+                        "pl.jarvis.DEBUG_PROMISE" -> intent.getStringExtra("tekst")?.let { text ->
+                            val now = java.time.LocalDateTime.now()
+                            val wav = File(File(ctx.filesDir, "recordings/${now.toLocalDate()}"), "%02d-%02d-%02d.wav".format(now.hour, now.minute, now.second))
+                            Thread { pl.jarvis.assistant.RecordingNotes.commitments(ctx, wav, text) }.start()
+                        }
+                        else -> runPending(ctx)
+                    }
                 }
             }
-            val filter = IntentFilter("pl.jarvis.DEBUG_TRANSCRIBE").apply { addAction("pl.jarvis.DEBUG_ASK") }
+            val filter = IntentFilter("pl.jarvis.DEBUG_TRANSCRIBE").apply {
+                addAction("pl.jarvis.DEBUG_ASK")
+                addAction("pl.jarvis.DEBUG_PROMISE")
+            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) ctx.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
             else ctx.registerReceiver(receiver, filter)
         }

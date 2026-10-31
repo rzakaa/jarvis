@@ -142,10 +142,14 @@ object Assistant {
         PiperVoice.prepare(ctx)
         // Nagrania: tekst → skrót, zadania i fakty; Jarvis może w nich szukać.
         Transcriber.prepare(ctx)
-        Transcriber.onTranscribed = { c, wav, text -> if (Prefs.autoSummaries(c)) RecordingNotes.process(c, wav, text) }
+        Transcriber.onTranscribed = { c, wav, text ->
+            if (Prefs.autoSummaries(c)) RecordingNotes.process(c, wav, text)
+            if (Prefs.commitments(c)) RecordingNotes.commitments(c, wav, text)
+        }
         JarvisTools.recordingsSearch = { from, to, query -> RecordingNotes.search(ctx, from, to, query) }
         JarvisTools.recordingRead = { day, time -> RecordingNotes.read(ctx, day, time) }
         JarvisTools.recentConversations = { RecordingNotes.recent(ctx) }
+        NotificationStore.init(ctx)
         JarvisTools.phone = { name, input -> PhoneTools.run(ctx, name, input) }
         ClaudeBrain.onCost = { Prefs.addClaudeSpent(ctx, it) }
         OpenAiCompatibleBrain.timing = { Log.d(TAG, "${System.currentTimeMillis() % 100_000} $it") }        // Alarmy znikają przy reinstalacji aplikacji – ustawiamy najbliższe przypomnienie od nowa.
@@ -362,6 +366,18 @@ object Assistant {
             tasks.forEach { ledger.addNote(now, it) }
             facts.forEach { ledger.addMemory(now, it) }
             dataChanged()
+        }
+    }
+
+    /** Obietnica wyłapana z nagranej rozmowy – przypomnienie i (bez terminu) zadanie; widać to w czacie. */
+    fun addFromRecording(at: LocalDateTime, text: String, task: String?) {
+        handler.post {
+            val duplicate = ledger.pendingReminders().any { PhoneTools.normalize(it.text) == PhoneTools.normalize(text) }
+            if (duplicate) return@post
+            ledger.addReminder(at, text, wake = false)
+            task?.let { ledger.addNote(LocalDateTime.now(), it) }
+            dataChanged()
+            addMessage(ChatMessage(false, "Wyłapałem z rozmowy: $text Przypomnę ${at.toLocalDate()} o ${clock(at)}.", "z nagrania"))
         }
     }
 

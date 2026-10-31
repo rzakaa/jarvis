@@ -1,17 +1,38 @@
 package pl.jarvis.assistant
 
 import android.app.Notification
+import android.content.Context
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import java.time.Instant
 import java.time.ZoneId
 
-/** Ostatnie powiadomienia z innych aplikacji (WhatsApp, Messenger, SMS…) – tylko w pamięci telefonu. */
+/**
+ * Ostatnie powiadomienia z innych aplikacji (WhatsApp, Messenger, SMS…). Zapisane tylko w telefonie
+ * (powiadomienia.json w prywatnych danych), żeby adres od klienta sprzed tygodnia też dało się znaleźć.
+ */
 object NotificationStore {
     data class Entry(val time: Long, val app: String, val title: String, val text: String)
 
-    private const val MAX = 300
+    private const val MAX = 500
     private val entries = ArrayDeque<Entry>()
+    private var file: File? = null
+
+    @Synchronized
+    fun init(context: Context) {
+        if (file != null) return
+        val f = File(context.filesDir, "powiadomienia.json").also { file = it }
+        runCatching {
+            val array = JSONArray(f.readText())
+            for (i in 0 until array.length()) {
+                val o = array.getJSONObject(i)
+                entries.addLast(Entry(o.getLong("t"), o.getString("a"), o.getString("n"), o.getString("x")))
+            }
+        }
+    }
 
     @Synchronized
     fun add(entry: Entry) {
@@ -19,6 +40,15 @@ object NotificationStore {
         entries.removeAll { it.app == entry.app && it.title == entry.title && it.text == entry.text }
         entries.addLast(entry)
         while (entries.size > MAX) entries.removeFirst()
+        file?.let { f ->
+            val array = JSONArray()
+            entries.forEach { array.put(JSONObject().put("t", it.time).put("a", it.app).put("n", it.title).put("x", it.text)) }
+            runCatching {
+                val tmp = File(f.parentFile, f.name + ".tmp")
+                tmp.writeText(array.toString())
+                tmp.renameTo(f)
+            }
+        }
     }
 
     @Synchronized
@@ -39,6 +69,7 @@ object NotificationStore {
 /** Zbiera powiadomienia do [NotificationStore]; włącza się w ustawieniach Androida („Dostęp do powiadomień”). */
 class JarvisNotifications : NotificationListenerService() {
     override fun onListenerConnected() {
+        NotificationStore.init(applicationContext)
         runCatching { activeNotifications?.forEach { store(it) } }
     }
 
