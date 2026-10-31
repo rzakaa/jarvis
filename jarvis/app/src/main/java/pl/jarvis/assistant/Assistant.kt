@@ -137,6 +137,7 @@ object Assistant {
         JarvisTools.recordingsSearch = { from, to, query -> RecordingNotes.search(ctx, from, to, query) }
         JarvisTools.recordingRead = { day, time -> RecordingNotes.read(ctx, day, time) }
         JarvisTools.recentConversations = { RecordingNotes.recent(ctx) }
+        JarvisTools.phone = { name, input -> PhoneTools.run(ctx, name, input) }
         // Alarmy znikają przy reinstalacji aplikacji – ustawiamy najbliższe przypomnienie od nowa.
         Reminders.schedule(ctx, ledger)
         addMessage(
@@ -404,6 +405,7 @@ object Assistant {
         // Odezwał się – pobudka zrobiła swoje (o „jeszcze 10 minut” zadba AI, ustawiając nową).
         val wakeReply = waking != null
         stopWaking()
+        PhoneTools.takePending() // nic starego nie może ruszyć przy nowym poleceniu
         addMessage(ChatMessage(true, text))
         if (END_PHRASES.containsMatchIn(text.lowercase())) conversation = false
         // Odmowa porannego przeglądu – Jarvis żegna się i kończy pobudkę.
@@ -519,6 +521,13 @@ object Assistant {
         }
         // Koniec komunikatu w trakcie myślenia (speakAside) – czekamy dalej na odpowiedź.
         if (state.value != AssistantState.SPEAKING) return
+        // Połączenie, nawigacja, otwarcie aplikacji – dopiero teraz, i bez dalszego słuchania.
+        val action = PhoneTools.takePending()
+        if (action != null) {
+            endConversation()
+            runCatching(action).onFailure { addMessage(ChatMessage(false, "Nie udało się: ${it.message}", "telefon")) }
+            return
+        }
         if (conversation) startListening(isFollowUp = true) else setState(AssistantState.IDLE)
     }
 

@@ -163,7 +163,7 @@ class JarvisTools(private val ledger: Ledger, private val clock: () -> LocalDate
                     if (url.isEmpty()) return "Błąd: brak adresu." to false
                     WebTools.fetchPage(url) to false
                 }
-                else -> "Nieznane narzędzie $name." to false
+                else -> (phone?.invoke(name, input) ?: "Nieznane narzędzie $name.") to false
             }
         } catch (e: Exception) {
             "Błąd narzędzia: ${e.message}" to false
@@ -211,9 +211,14 @@ class JarvisTools(private val ledger: Ledger, private val clock: () -> LocalDate
         @Volatile
         var recordingRead: ((LocalDate, String) -> String)? = null
 
+        /** Narzędzia telefonu (kontakty, SMS, mapy…) – podpina warstwa Androida; null z wyniku = nieznane narzędzie. */
+        @Volatile
+        var phone: ((String, Map<String, Any?>) -> String?)? = null
+
         private val CONVERSATION_TIMEOUT: Duration = Duration.ofMinutes(15)
         private const val MAX_HISTORY = 40
-        const val MAX_TOOL_ROUNDS = 6
+        // Telefon: szukanie celu potrafi wymagać kilku kroków (pamięć, kontakty, SMS-y, mapy).
+        const val MAX_TOOL_ROUNDS = 10
 
         val SYSTEM_PROMPT = """
             Jesteś J.A.R.V.I.S. – osobisty asystent głosowy działający w telefonie użytkownika, wzorowany na asystencie
@@ -296,8 +301,29 @@ class JarvisTools(private val ledger: Ledger, private val clock: () -> LocalDate
               znasz z wyników narzędzi i z pobierz_finanse) i ewentualnie zapisz poprawiony.
             - Pomagaj też w zwykłych sprawach: odpowiadaj na pytania, doradzaj, licz, planuj, tłumacz, rozmawiaj.
 
-            Technicznie jeszcze nie masz dostępu do: dzwonienia, SMS-ów, maili, kalendarza Google i muzyki
-            (są w przygotowaniu). Jeśli ktoś o to poprosi, powiedz to krótko i zaproponuj, co możesz zrobić zamiast tego.
+            Telefon: masz pełny dostęp do telefonu użytkownika – kontakty (szukaj_kontaktu), dzwonienie (zadzwon),
+            SMS-y (wyslij_sms, czytaj_sms), historia połączeń (polaczenia), kalendarz telefonu (kalendarz_telefonu,
+            dodaj_wydarzenie), lokalizacja (lokalizacja), nawigacja w Mapach Google (nawiguj), komunikatory
+            (wyslij_wiadomosc: WhatsApp, Messenger, Telegram, Signal), powiadomienia z innych aplikacji
+            (powiadomienia), otwieranie aplikacji (otworz_aplikacje), latarka, Wi-Fi, Bluetooth, głośność oraz
+            ekran (ekran – co widać, wypelnij_pole – wpisz w formularz, kliknij – naciśnij przycisk). Działaj jak
+            inteligentny asystent: łącz narzędzia sam, bez dopytywania o rzeczy, które możesz sprawdzić.
+            - Gdy cel jest opisowy („prowadź mnie do chłopa w Zabrzu”, „zadzwoń do szwagra”), szukaj po kolei:
+              pamięć, szukaj_kontaktu (po imieniu, przezwisku, mieście – kontakty mają też adresy i notatki),
+              czytaj_sms i powiadomienia z tą frazą, nagrania. Imiona podawaj w mianowniku („Marek”, nie „Markowi”).
+              Gdy wynik jest jeden – działaj; gdy kilka – zapytaj krótko, który; gdy nic – powiedz, czego szukałeś.
+              Nowe ustalenia (np. „chłop z Zabrza to Heniek, ul. Wolności 5”) zapisz w pamięci.
+            - Dzwoń od razu, gdy wiadomo do kogo. Nawigację i otwieranie aplikacji uruchamiaj od razu – ruszą, gdy
+              skończysz mówić, więc powiedz jednym zdaniem, co robisz (np. „Prowadzę do Zabrza, ulica Wolności 5.”).
+            - Wiadomości (SMS, WhatsApp itd.) wysyłasz w imieniu użytkownika: zanim wyślesz, powiedz do kogo i
+              jaką treść, i zapytaj „wysłać?”. Wyślij dopiero po „tak”. Treść pisz naturalnie, w stylu użytkownika,
+              bez podpisu „Jarvis”. Gdy użytkownik podaje gotową treść i mówi „wyślij od razu” – nie pytaj.
+            - Formularze: najpierw ekran (zobacz pola), potem wypelnij_pole dla każdego pola danymi użytkownika
+              z pamięci i kontaktów; przyciski „wyślij”, „zamów”, „zapłać” naciskaj dopiero po potwierdzeniu.
+            - Odczytując SMS-y i powiadomienia streszczaj, nie czytaj wszystkiego dosłownie.
+            - Gdy narzędzie mówi o braku uprawnienia – powiedz krótko, że trzeba je włączyć w Opcjach,
+              w panelu „Dostęp do telefonu”.
+            Nie masz jeszcze dostępu do maili i muzyki.
         """.trimIndent()
 
         val SPECS = listOf(
@@ -413,6 +439,136 @@ class JarvisTools(private val ledger: Ledger, private val clock: () -> LocalDate
                 mapOf("adres" to mapOf("type" to "string", "description" to "Adres strony, np. https://…")),
                 listOf("adres"),
             ),
-        )
+        ) + PHONE_SPECS
+
+        private fun str(description: String) = mapOf("type" to "string", "description" to description)
+        private fun int(description: String) = mapOf("type" to "integer", "description" to description)
+
+        private val PHONE_SPECS: List<Spec>
+            get() = listOf(
+                Spec(
+                    "szukaj_kontaktu",
+                    "Szuka w kontaktach telefonu po imieniu, nazwisku, przezwisku, firmie, mieście albo słowie z adresu " +
+                        "lub notatki. Zwraca numery, adresy, e-maile.",
+                    mapOf("fraza" to str("Np. „Marek”, „Kowalski”, „Zabrze”, „hydraulik”.")),
+                    listOf("fraza"),
+                ),
+                Spec(
+                    "zadzwon",
+                    "Dzwoni pod numer (połączenie rusza po twojej wypowiedzi).",
+                    mapOf("numer" to str("Numer telefonu z kontaktów.")),
+                    listOf("numer"),
+                ),
+                Spec(
+                    "wyslij_sms",
+                    "Wysyła SMS od razu. Tylko po potwierdzeniu odbiorcy i treści przez użytkownika.",
+                    mapOf("numer" to str("Numer odbiorcy."), "tekst" to str("Treść wiadomości.")),
+                    listOf("numer", "tekst"),
+                ),
+                Spec(
+                    "czytaj_sms",
+                    "Najnowsze SMS-y (przychodzące i wysłane), opcjonalnie tylko pasujące do frazy (osoba, numer, słowo z treści).",
+                    mapOf("fraza" to str("Np. „Marek”, „adres”, „Zabrze”; puste = wszystkie."), "ile" to int("Ile wiadomości, domyślnie 10.")),
+                    emptyList(),
+                ),
+                Spec(
+                    "polaczenia",
+                    "Historia połączeń: kto dzwonił, nieodebrane, do kogo dzwonił użytkownik.",
+                    mapOf("ile" to int("Ile ostatnich połączeń, domyślnie 10.")),
+                    emptyList(),
+                ),
+                Spec(
+                    "kalendarz_telefonu",
+                    "Wydarzenia z kalendarza w telefonie (Google) w podanym zakresie dni.",
+                    mapOf("od" to str("Od dnia, RRRR-MM-DD; domyślnie dziś."), "do" to str("Do dnia włącznie, RRRR-MM-DD; domyślnie jak od.")),
+                    emptyList(),
+                ),
+                Spec(
+                    "dodaj_wydarzenie",
+                    "Dodaje wydarzenie do kalendarza Google w telefonie.",
+                    mapOf(
+                        "tytul" to str("Tytuł, np. „Wizyta u dentysty”."),
+                        "poczatek" to str("RRRR-MM-DDTGG:MM."),
+                        "koniec" to str("RRRR-MM-DDTGG:MM; domyślnie godzina po początku."),
+                        "miejsce" to str("Adres lub miejsce, opcjonalnie."),
+                        "opis" to str("Opcjonalnie."),
+                    ),
+                    listOf("tytul", "poczatek"),
+                ),
+                Spec(
+                    "lokalizacja",
+                    "Aktualna pozycja telefonu (współrzędne i adres).",
+                    emptyMap(),
+                    emptyList(),
+                ),
+                Spec(
+                    "nawiguj",
+                    "Uruchamia nawigację Google Maps do celu (rusza po twojej wypowiedzi).",
+                    mapOf(
+                        "cel" to str("Adres albo nazwa miejsca, jak najdokładniej, np. „Wolności 5, Zabrze”."),
+                        "tryb" to str("samochód (domyślnie), pieszo albo rower."),
+                    ),
+                    listOf("cel"),
+                ),
+                Spec(
+                    "wyslij_wiadomosc",
+                    "Wysyła wiadomość komunikatorem. WhatsApp z numerem – wysyła sam; Messenger, Telegram, Signal – " +
+                        "otwiera z gotową treścią, odbiorcę wybiera użytkownik. Tylko po potwierdzeniu treści.",
+                    mapOf(
+                        "aplikacja" to str("whatsapp (domyślnie), messenger, telegram, signal albo sms."),
+                        "numer" to str("Numer odbiorcy z kontaktów (dla WhatsAppa i SMS)."),
+                        "tekst" to str("Treść wiadomości."),
+                    ),
+                    listOf("aplikacja", "tekst"),
+                ),
+                Spec(
+                    "powiadomienia",
+                    "Ostatnie powiadomienia z innych aplikacji (wiadomości z WhatsAppa, Messengera, SMS-y, maile…).",
+                    mapOf("fraza" to str("Np. „WhatsApp”, „Marek”, „adres”; puste = wszystkie."), "ile" to int("Ile, domyślnie 15.")),
+                    emptyList(),
+                ),
+                Spec(
+                    "otworz_aplikacje",
+                    "Otwiera aplikację po nazwie (rusza po twojej wypowiedzi).",
+                    mapOf("nazwa" to str("Np. „Allegro”, „YouTube”, „Aparat”.")),
+                    listOf("nazwa"),
+                ),
+                Spec(
+                    "przelacz",
+                    "Włącza lub wyłącza: latarka, wifi, bluetooth.",
+                    mapOf("co" to str("latarka, wifi albo bluetooth."), "wlacz" to mapOf("type" to "boolean", "description" to "true = włącz.")),
+                    listOf("co", "wlacz"),
+                ),
+                Spec(
+                    "glosnosc",
+                    "Ustawia głośność multimediów (muzyka, filmy).",
+                    mapOf("procent" to int("0–100.")),
+                    listOf("procent"),
+                ),
+                Spec(
+                    "ekran",
+                    "Czyta, co jest teraz na ekranie telefonu (teksty, przyciski, pola formularza).",
+                    emptyMap(),
+                    emptyList(),
+                ),
+                Spec(
+                    "wypelnij_pole",
+                    "Wpisuje tekst w pole formularza na ekranie.",
+                    mapOf(
+                        "pole" to str("Podpis pola z narzędzia ekran, np. „Imię”, „Adres e-mail”; puste = aktywne pole."),
+                        "tekst" to str("Co wpisać."),
+                    ),
+                    listOf("tekst"),
+                ),
+                Spec(
+                    "kliknij",
+                    "Naciska przycisk lub element na ekranie po jego tekście, albo przycisk systemowy.",
+                    mapOf(
+                        "tekst" to str("Tekst przycisku, np. „Dalej”, „Zaloguj”."),
+                        "systemowy" to str("Zamiast tekstu: wstecz, ekran_glowny, ostatnie albo powiadomienia."),
+                    ),
+                    emptyList(),
+                ),
+            )
     }
 }

@@ -1,5 +1,9 @@
 package pl.jarvis.ui
 
+import android.content.Intent
+import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -14,6 +18,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -28,10 +33,12 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import pl.jarvis.assistant.Assistant
 import pl.jarvis.assistant.CloudVoice
+import pl.jarvis.assistant.PhoneTools
 import pl.jarvis.assistant.PiperVoice
 import pl.jarvis.brain.Ledger
 import pl.jarvis.brain.OpenAiCompatibleBrain
@@ -67,7 +74,7 @@ fun SettingsScreen() {
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item { HudLabel("opcje · wersja 0.35", color = Hud.Cyan, size = 13.sp) }
+        item { HudLabel("opcje · wersja 0.36", color = Hud.Cyan, size = 13.sp) }
 
         item {
             HudPanel(modifier = Modifier.fillMaxWidth(), title = "sztuczna inteligencja") {
@@ -195,6 +202,8 @@ fun SettingsScreen() {
 
         item { VoicePanel() }
 
+        item { PhonePanel() }
+
         item { Hint("Klucze są zapisane tylko w tym telefonie, w prywatnych danych aplikacji.") }
     }
 }
@@ -308,9 +317,50 @@ private fun AzurePanel() {
         CloudVoice.speak(context, "Dzień dobry, szefie. Tu Jarvis, do usług.", onDone = {}, fallback = {})
     })
     Hint(
-        "Klucz: portal.azure.com → Utwórz zasób → „Speech” (Usługi mowy) → warstwa cenowa Free F0, region West Europe. " +
-            "Potem „Klucze i punkt końcowy” → Klucz 1. Za darmo 500 tys. znaków miesięcznie.",
+        "Klucz: portal.azure.com → Utwórz zasób → „Speech” (Usługi mowy) → warstwa cenowa Free F0, region np. Germany West Central " +
+            "(West Europe nie przyjmuje nowych). Potem „Klucze i punkt końcowy” → Klucz 1 i region. Za darmo 500 tys. znaków miesięcznie.",
     )
+}
+
+/** Dostęp do telefonu: uprawnienia Androida, powiadomienia i sterowanie ekranem. */
+@Composable
+private fun PhonePanel() {
+    val context = LocalContext.current
+    var missing by remember { mutableStateOf(PhoneTools.missingPermissions(context)) }
+    var notifications by remember { mutableStateOf(PhoneTools.notificationsEnabled(context)) }
+    var screen by remember { mutableStateOf(PhoneTools.screenControlEnabled(context)) }
+    // Dostępy włącza się w ustawieniach Androida – po powrocie odświeżamy status.
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1000)
+            missing = PhoneTools.missingPermissions(context)
+            notifications = PhoneTools.notificationsEnabled(context)
+            screen = PhoneTools.screenControlEnabled(context)
+        }
+    }
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        missing = PhoneTools.missingPermissions(context)
+    }
+    fun open(action: String) = context.startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    HudPanel(modifier = Modifier.fillMaxWidth(), title = "dostęp do telefonu") {
+        HudLabel(
+            if (missing.isEmpty()) "kontakty, sms, kalendarz, lokalizacja: tak"
+            else "brak ${missing.size} z ${PhoneTools.PERMISSIONS.size} uprawnień",
+            color = if (missing.isEmpty()) Hud.Green else Hud.Amber,
+        )
+        if (missing.isNotEmpty()) {
+            HudButton("nadaj uprawnienia", filled = true, onClick = { launcher.launch(missing.toTypedArray()) }, modifier = Modifier.padding(top = 6.dp))
+        }
+        HudLabel("powiadomienia: ${if (notifications) "tak" else "nie"}", color = if (notifications) Hud.Green else Hud.Amber, modifier = Modifier.padding(top = 10.dp))
+        if (!notifications) HudButton("włącz dostęp do powiadomień", onClick = { open(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS) }, modifier = Modifier.padding(top = 6.dp))
+        HudLabel("sterowanie ekranem: ${if (screen) "tak" else "nie"}", color = if (screen) Hud.Green else Hud.Amber, modifier = Modifier.padding(top = 10.dp))
+        if (!screen) HudButton("włącz sterowanie ekranem", onClick = { open(Settings.ACTION_ACCESSIBILITY_SETTINGS) }, modifier = Modifier.padding(top = 6.dp))
+        Hint(
+            "Jarvis dzwoni, pisze SMS-y i wiadomości na WhatsAppie, prowadzi w Mapach Google, czyta kalendarz i powiadomienia, " +
+                "wypełnia formularze. Wiadomości wysyła dopiero po twoim „tak”. Powiadomienia: znajdź na liście „Jarvis”. " +
+                "Sterowanie ekranem: Ułatwienia dostępu → Jarvis → włącz.",
+        )
+    }
 }
 
 @Composable

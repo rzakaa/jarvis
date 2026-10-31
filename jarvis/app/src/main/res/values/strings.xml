@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Jarvis</string>
+    <string name="accessibility_description">Jarvis czyta ekran, wypełnia pola formularzy i naciska przyciski – tylko gdy go o to poprosisz (np. „wyślij to na WhatsAppie”, „wpisz adres”).</string>
 </resources>
