@@ -74,7 +74,7 @@ fun SettingsScreen() {
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item { HudLabel("opcje · wersja 0.37", color = Hud.Cyan, size = 13.sp) }
+        item { HudLabel("opcje · wersja 0.38", color = Hud.Cyan, size = 13.sp) }
 
         item {
             HudPanel(modifier = Modifier.fillMaxWidth(), title = "sztuczna inteligencja") {
@@ -91,6 +91,7 @@ fun SettingsScreen() {
                         HudChip("Mądry · Sonnet", settings.smart, onClick = { update { it.copy(smart = true) } })
                         HudChip("Szybki · Haiku", !settings.smart, onClick = { update { it.copy(smart = false) } })
                     }
+                    ClaudeBudget()
                     Hint(
                         "Klucz: platform.claude.com → API Keys → Create Key (najpierw doładuj konto, np. 5 \$). " +
                             "Mądry model to ok. 5 gr za pytanie, szybki – ułamek grosza. Ustaw limit wydatków na koncie.",
@@ -99,6 +100,7 @@ fun SettingsScreen() {
                     KeyField("Klucz API Kimi (sk-…)", settings.kimiKey) { v -> update { it.copy(kimiKey = v) } }
                     KeyField("Adres API", settings.kimiBaseUrl, secret = false) { v -> update { it.copy(kimiBaseUrl = v) } }
                     KeyField("Model (najszybszy: kimi-k3.1-pro-highspeed)", settings.kimiModel, secret = false) { v -> update { it.copy(kimiModel = v) } }
+                    KimiBalance(settings.kimiKey, settings.kimiBaseUrl)
                     HudButton(
                         "pobierz modele",
                         onClick = {
@@ -321,6 +323,68 @@ private fun AzurePanel() {
             "(West Europe nie przyjmuje nowych). Potem „Klucze i punkt końcowy” → Klucz 1 i region. Za darmo 500 tys. znaków miesięcznie.",
     )
 }
+
+/** Saldo konta Kimi – pobierane z API przy otwarciu Opcji i na żądanie. */
+@Composable
+private fun KimiBalance(key: String, baseUrl: String) {
+    var status by remember { mutableStateOf<String?>(null) }
+    var refresh by remember { mutableStateOf(0) }
+    LaunchedEffect(key, baseUrl, refresh) {
+        if (key.isBlank()) {
+            status = null
+            return@LaunchedEffect
+        }
+        status = "sprawdzam saldo…"
+        status = withContext(Dispatchers.IO) {
+            runCatching { OpenAiCompatibleBrain.balance(key, baseUrl) }.fold(
+                { b ->
+                    "do wydania: ${money(b.available)} ${b.currency}" +
+                        if (b.voucher > 0) " (w tym bonus ${money(b.voucher)} ${b.currency})" else ""
+                },
+                { e -> "saldo: błąd – ${e.message?.take(80)}" },
+            )
+        }
+    }
+    status?.let {
+        HudLabel(it, color = if (it.startsWith("do wydania")) Hud.Green else Hud.Amber, modifier = Modifier.padding(top = 10.dp))
+        HudButton("odśwież saldo", onClick = { refresh++ }, modifier = Modifier.padding(top = 6.dp))
+    }
+}
+
+/** Claude nie podaje salda przez API – liczymy koszt każdego pytania od wpisanego stanu konta. */
+@Composable
+private fun ClaudeBudget() {
+    val context = LocalContext.current
+    var budget by remember { mutableStateOf(Prefs.claudeBudget(context)) }
+    var spent by remember { mutableStateOf(Prefs.claudeSpent(context)) }
+    var input by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(2000)
+            spent = Prefs.claudeSpent(context)
+        }
+    }
+    if (budget > 0) {
+        val left = budget - spent
+        HudLabel(
+            "do wydania ok. ${money(left)} \$ (wydane ${money(spent)} \$ z ${money(budget)} \$)",
+            color = if (left > budget * 0.1) Hud.Green else Hud.Amber,
+            modifier = Modifier.padding(top = 10.dp),
+        )
+    }
+    KeyField("Stan konta Claude w \$ (z platform.claude.com → Billing)", input, secret = false) { input = it }
+    HudButton("zapisz stan konta", onClick = {
+        input.replace(',', '.').toDoubleOrNull()?.takeIf { it >= 0 }?.let {
+            Prefs.setClaudeBudget(context, it)
+            budget = it
+            spent = 0.0
+            input = ""
+        }
+    }, modifier = Modifier.padding(top = 6.dp))
+    Hint("Claude nie podaje salda aplikacjom – Jarvis odejmuje koszt każdego pytania (wg cennika) od wpisanej kwoty. Po doładowaniu wpisz nowy stan.")
+}
+
+private fun money(value: Double) = "%.2f".format(value).replace('.', ',')
 
 /** Dostęp do telefonu: uprawnienia Androida, powiadomienia i sterowanie ekranem. */
 @Composable

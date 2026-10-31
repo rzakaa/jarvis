@@ -263,6 +263,20 @@ class OpenAiCompatibleBrain(
         private fun message(role: String, content: String): ObjectNode =
             MAPPER.createObjectNode().put("role", role).put("content", content)
 
+        /** Saldo konta Kimi: do wydania (razem), w tym bonus (voucher); waluta $ (moonshot.ai) albo ¥ (moonshot.cn). */
+        data class Balance(val available: Double, val voucher: Double, val currency: String)
+
+        /** Saldo konta (GET /users/me/balance). Blokuje. */
+        fun balance(apiKey: String, baseUrl: String): Balance {
+            val base = baseUrl.trim().trimEnd('/')
+            val data = call(apiKey, base, "/users/me/balance", null).path("data")
+            return Balance(
+                data.path("available_balance").asDouble(),
+                data.path("voucher_balance").asDouble(),
+                if (base.contains(".cn")) "¥" else "$",
+            )
+        }
+
         /** Lista modeli dostępnych dla klucza (GET /models) – do wyboru w ustawieniach. Blokuje. */
         fun listModels(apiKey: String, baseUrl: String): List<String> =
             call(apiKey, baseUrl.trim().trimEnd('/'), "/models", null)

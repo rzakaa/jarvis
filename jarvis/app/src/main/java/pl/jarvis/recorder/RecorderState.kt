@@ -180,6 +180,18 @@ object Prefs {
 
     fun azureVoiceName(context: Context) = prefs(context).getString("azure_voice_name", "pl-PL-MarekNeural").orEmpty()
 
+    /** Stan konta Claude wpisany przez użytkownika ($) i ile Jarvis wydał od tej chwili – API nie podaje salda. */
+    fun claudeBudget(context: Context) = prefs(context).getFloat("claude_budget", 0f).toDouble()
+
+    fun claudeSpent(context: Context) = prefs(context).getFloat("claude_spent", 0f).toDouble()
+
+    fun setClaudeBudget(context: Context, dollars: Double) = prefs(context).edit()
+        .putFloat("claude_budget", dollars.toFloat()).putFloat("claude_spent", 0f).apply()
+
+    @Synchronized
+    fun addClaudeSpent(context: Context, dollars: Double) = prefs(context).edit()
+        .putFloat("claude_spent", (claudeSpent(context) + dollars).toFloat()).apply()
+
     fun saveAzure(context: Context, key: String, region: String, voiceName: String) = prefs(context).edit()
         .putString("azure_key", key.trim()).putString("azure_region", region.trim().lowercase().replace(" ", ""))
         .putString("azure_voice_name", voiceName).apply()

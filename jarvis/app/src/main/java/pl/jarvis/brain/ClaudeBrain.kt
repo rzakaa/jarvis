@@ -11,6 +11,7 @@ import com.anthropic.models.messages.OutputConfig
 import com.anthropic.models.messages.StopReason
 import com.anthropic.models.messages.Tool
 import com.anthropic.models.messages.ToolResultBlockParam
+import com.anthropic.models.messages.Usage
 import java.time.Duration
 import java.time.LocalDateTime
 
@@ -50,6 +51,7 @@ class ClaudeBrain(
         try {
             repeat(JarvisTools.MAX_TOOL_ROUNDS) {
                 val response = client.messages().create(params())
+                countCost(model, response.usage())
                 history += response.toParam()
                 val stop = response.stopReason().orElse(StopReason.END_TURN)
                 if (stop == StopReason.TOOL_USE) {
@@ -90,6 +92,7 @@ class ClaudeBrain(
                 .addUserMessage(user)
                 .build(),
         )
+        countCost(MODEL_FAST, response.usage())
         return response.content().mapNotNull { it.text().orElse(null)?.text() }.joinToString("").trim()
             .removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
     }
@@ -112,9 +115,23 @@ class ClaudeBrain(
         return builder.build()
     }
 
+    /** Koszt zapytania w $ wg cennika (za milion tokenów); zapis z pamięci podręcznej 1,25×, odczyt 0,1× ceny wejścia. */
+    private fun countCost(model: String, usage: Usage) {
+        val (input, output) = if (model == MODEL_SMART) 2.0 to 10.0 else 0.10 to 0.50
+        val tokens = usage.inputTokens() * input +
+            usage.cacheCreationInputTokens().orElse(0L) * input * 1.25 +
+            usage.cacheReadInputTokens().orElse(0L) * input * 0.1 +
+            usage.outputTokens() * output
+        onCost?.invoke(tokens / 1_000_000)
+    }
+
     companion object {
         const val MODEL_FAST = "claude-haiku-5-5"
         const val MODEL_SMART = "claude-sonnet-5-5"
+
+        /** Koszt każdego zapytania w $ – warstwa Androida odejmuje go od wpisanego stanu konta. */
+        @Volatile
+        var onCost: ((Double) -> Unit)? = null
 
         private val TOOLS = JarvisTools.SPECS.map { spec ->
             Tool.builder()

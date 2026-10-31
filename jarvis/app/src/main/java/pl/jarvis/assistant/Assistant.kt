@@ -147,6 +147,7 @@ object Assistant {
         JarvisTools.recordingRead = { day, time -> RecordingNotes.read(ctx, day, time) }
         JarvisTools.recentConversations = { RecordingNotes.recent(ctx) }
         JarvisTools.phone = { name, input -> PhoneTools.run(ctx, name, input) }
+        ClaudeBrain.onCost = { Prefs.addClaudeSpent(ctx, it) }
         OpenAiCompatibleBrain.timing = { Log.d(TAG, "${System.currentTimeMillis() % 100_000} $it") }        // Alarmy znikają przy reinstalacji aplikacji – ustawiamy najbliższe przypomnienie od nowa.
         Reminders.schedule(ctx, ledger)
         addMessage(
