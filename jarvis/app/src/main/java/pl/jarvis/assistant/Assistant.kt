@@ -131,6 +131,13 @@ object Assistant {
 
     private const val TAG = "JarvisAssistant"
 
+    /** Po tylu ms od początku mówienia zaczynamy słuchać „stop” (rejestrator musi oddać mikrofon). */
+    private const val BARGE_IN_DELAY_MS = 400L
+
+    /** To, co Jarvis właśnie mówi – jego własne „stop” z głośnika nie może go przerwać. */
+    @Volatile
+    private var spokenNow = ""
+
     fun init(context: Context) {
         if (appContext != null) return
         val ctx = context.applicationContext
@@ -329,15 +336,7 @@ object Assistant {
                 conversation = false
                 recognizer?.stopListening()
             }
-            AssistantState.SPEAKING -> {
-                tts?.stop()
-                PiperVoice.stop()
-                CloudVoice.stop()
-                conversation = false
-                greeting = false
-                stopWaking()
-                setState(AssistantState.IDLE)
-            }
+            AssistantState.SPEAKING -> silence()
             else -> {
                 conversation = true
                 ai?.warmUp()
@@ -516,6 +515,7 @@ object Assistant {
     }
 
     private fun say(text: String, source: String? = null, show: Boolean = true, alarm: Boolean = false) {
+        spokenNow = text
         if (show) addMessage(ChatMessage(false, text, source))
         val wait = (UNMUTE_DELAY_MS + 50 - (System.currentTimeMillis() - listeningEndedAt)).coerceAtLeast(0)
         val ctx = appContext
@@ -568,6 +568,7 @@ object Assistant {
             return
         }
         chunkPlaying = true
+        spokenNow = text
         setState(AssistantState.SPEAKING)
         val wait = (UNMUTE_DELAY_MS + 50 - (System.currentTimeMillis() - listeningEndedAt)).coerceAtLeast(0)
         handler.postDelayed({
@@ -671,9 +672,36 @@ object Assistant {
         }
     }
 
+    /** Przerwanie w pół zdania (dotknięcie reaktora albo „stop”): cisza i koniec rozmowy. */
+    private fun silence() {
+        if (state.value != AssistantState.SPEAKING) return
+        tts?.stop()
+        PiperVoice.stop()
+        CloudVoice.stop()
+        chunks.clear()
+        chunkPlaying = false
+        streamDone = false
+        replyId++ // dopisywana jeszcze odpowiedź już się nie odezwie
+        PhoneTools.takePending()
+        conversation = false
+        greeting = false
+        stopWaking()
+        setState(AssistantState.IDLE)
+    }
+
     private fun setState(newState: AssistantState) {
         val wasListening = state.value == AssistantState.LISTENING
+        val wasSpeaking = state.value == AssistantState.SPEAKING
         state.value = newState
+        // Gdy Jarvis mówi, słuchamy słowa „stop” (chwilę po starcie – rejestrator oddaje mikrofon).
+        if (newState == AssistantState.SPEAKING) {
+            if (!wasSpeaking) handler.postDelayed({
+                val ctx = appContext
+                if (ctx != null && state.value == AssistantState.SPEAKING) BargeIn.start(ctx, { spokenNow }) { silence() }
+            }, BARGE_IN_DELAY_MS)
+        } else if (wasSpeaking) {
+            BargeIn.stop()
+        }
         if (wasListening && newState != AssistantState.LISTENING) {
             // Końcowe piknięcie systemu gra tuż po zakończeniu słuchania – dźwięk wraca chwilę później.
             listeningEndedAt = System.currentTimeMillis()

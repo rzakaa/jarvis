@@ -367,6 +367,19 @@ object Transcriber {
     }
 
     /** Jeden kawałek (do 30 s) na tekst; null – nic nie rozpoznano. */
+    /**
+     * Szybkie rozpoznanie krótkiego kawałka (np. „stop” w trakcie mówienia Jarvisa). Gdy silnik jest zajęty
+     * dłużej niż [waitMs] (przepisywanie zaległości) – null, bez czekania w kolejce.
+     */
+    fun quickDecode(context: Context, samples: ShortArray, waitMs: Long): String? {
+        if (!isDownloaded(context) || !engineLock.tryLock(waitMs, TimeUnit.MILLISECONDS)) return null
+        return try {
+            decode(context, samples)
+        } finally {
+            engineLock.unlock()
+        }
+    }
+
     private fun decode(context: Context, samples: ShortArray): String? = engineLock.withLock {
         val rec = engine(context)
         val stream = rec.createStream()
