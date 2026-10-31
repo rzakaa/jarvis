@@ -14,6 +14,7 @@ import java.time.LocalDateTime
 /**
  * Mózg Jarvisa na API zgodnym z OpenAI (Chat Completions) – np. Kimi (Moonshot).
  * Te same narzędzia i ta sama osobowość co przy Claude ([JarvisTools]).
+ * Odpowiedź przychodzi strumieniem – gotowe zdania idą do mówienia, zanim model skończy pisać.
  */
 class OpenAiCompatibleBrain(
     private val apiKey: String,
@@ -27,18 +28,29 @@ class OpenAiCompatibleBrain(
     private val history = mutableListOf<ObjectNode>()
     private var lastActivity: LocalDateTime? = null
 
-    override fun handle(userText: String, onSearching: () -> Unit): AiBrain.Result {
+    /** W bieżącej odpowiedzi było wbudowane wyszukiwanie – modele k3 nie trawią jego wyników, kończy [SEARCH_MODEL]. */
+    private var searched = false
+
+    @Volatile
+    private var lastRequestAt = 0L
+
+    override fun handle(userText: String, onSearching: () -> Unit, onSentence: (String) -> Unit): AiBrain.Result {
         val now = tools.now()
-        if (tools.shouldReset(lastActivity, now, history.size)) history.clear()
+        if (tools.shouldReset(lastActivity, now, history.size)) {
+            history.clear()
+            searched = false
+        }
         lastActivity = now
+        val turnStart = history.size
         history += message("user", "${tools.context(now)}\n\n$userText")
 
         var changed = false
         try {
             repeat(JarvisTools.MAX_TOOL_ROUNDS) {
-                val response = post("/chat/completions", requestBody())
-                val reply = response.path("choices").path(0).path("message")
-                if (reply !is ObjectNode) throw IOException("Nieoczekiwana odpowiedź: ${response.toString().take(200)}")
+                // Modele kimi-k3 psują rundę po wbudowanym wyszukiwaniu („tokenization failed”) – kończy ją k2.6.
+                val roundModel = if (searched && model.startsWith("kimi-k3")) SEARCH_MODEL else model
+                val (reply, rest) = stream(requestBody(history, roundModel), onSentence)
+                timing?.invoke("runda ${it + 1}: " + reply.path("tool_calls").joinToString { c -> c.path("function").path("name").asText() }.ifEmpty { "odpowiedź" })
                 // Odpowiedź modelu wraca do historii w całości (z ewentualnym rozumowaniem modelu).
                 history += reply
                 val calls = reply.path("tool_calls")
@@ -50,7 +62,10 @@ class OpenAiCompatibleBrain(
                         if (name.startsWith("$")) {
                             // Wbudowane narzędzie Kimi (np. $web_search) – serwer robi wszystko sam,
                             // my tylko odsyłamy jego argumenty bez zmian. Szukanie trwa kilkanaście sekund.
-                            if (name == "\$web_search") onSearching()
+                            if (name == "\$web_search") {
+                                searched = true
+                                onSearching()
+                            }
                             history += MAPPER.createObjectNode()
                                 .put("role", "tool")
                                 .put("tool_call_id", call.path("id").asText())
@@ -70,14 +85,36 @@ class OpenAiCompatibleBrain(
                     }
                     return@repeat
                 }
+                if (searched) {
+                    // Surowe wyniki wyszukiwania wypadają z historii (zostaje pytanie i odpowiedź) –
+                    // dzięki temu kolejne pytania idą znowu szybkim modelem.
+                    history.subList(turnStart + 1, history.size - 1).clear()
+                    searched = false
+                }
                 val text = reply.path("content").asText("").trim()
-                return AiBrain.Result(text.ifEmpty { "Gotowe." }, changed)
+                return if (text.isEmpty()) AiBrain.Result("Gotowe.", changed) else AiBrain.Result(text, changed, rest)
             }
             return AiBrain.Result("Zgubiłem wątek. Powiedz jeszcze raz, o co chodzi.", changed)
         } catch (e: Exception) {
             history.clear()
+            searched = false
             throw e
         }
+    }
+
+    /**
+     * Rozgrzewka: to samo polecenie systemowe i narzędzia, jedno słowo odpowiedzi. Otwiera połączenie
+     * i wpisuje początek zapytania do pamięci podręcznej Kimi – wtedy prawdziwe pytanie idzie szybciej.
+     */
+    override fun warmUp() {
+        if (System.currentTimeMillis() - lastRequestAt < WARM_FOR_MS) return
+        lastRequestAt = System.currentTimeMillis()
+        Thread {
+            runCatching {
+                val body = requestBody(listOf(message("user", "."))).put("max_tokens", 1)
+                call(apiKey, base, "/chat/completions", MAPPER.writeValueAsString(body))
+            }
+        }.start()
     }
 
     override fun completeJson(system: String, user: String): String {
@@ -88,11 +125,86 @@ class OpenAiCompatibleBrain(
         return post("/chat/completions", body).path("choices").path(0).path("message").path("content").asText("")
     }
 
-    private fun requestBody(): ObjectNode {
+    /**
+     * Wysyła zapytanie strumieniem i składa z kawałków wiadomość modelu (treść, rozumowanie, wywołania
+     * narzędzi). Gotowe zdania treści oddaje [onSentence] na bieżąco; zwraca też niewypowiedzianą resztę.
+     */
+    private fun stream(body: ObjectNode, onSentence: (String) -> Unit): Pair<ObjectNode, String> {
+        body.put("stream", true)
+        lastRequestAt = System.currentTimeMillis()
+        val request = Request.Builder()
+            .url("$base/chat/completions")
+            .header("Authorization", "Bearer ${apiKey.trim()}")
+            .post(MAPPER.writeValueAsString(body).toRequestBody("application/json".toMediaType()))
+            .build()
+        val content = StringBuilder()
+        val reasoning = StringBuilder()
+        val calls = sortedMapOf<Int, ToolCall>()
+        var spoken = 0
+        HTTP.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw IOException("HTTP ${response.code}: ${response.body?.string().orEmpty().take(200)}")
+            val source = response.body?.source() ?: throw IOException("pusta odpowiedź")
+            while (true) {
+                val line = source.readUtf8Line() ?: break
+                if (!line.startsWith("data:")) continue
+                val data = line.removePrefix("data:").trim()
+                if (data == "[DONE]") break
+                val delta = MAPPER.readTree(data).path("choices").path(0).path("delta")
+                delta.path("reasoning_content").takeIf { it.isTextual }?.let { reasoning.append(it.asText()) }
+                delta.path("tool_calls").forEach { c ->
+                    val slot = calls.getOrPut(c.path("index").asInt(0)) { ToolCall() }
+                    c.path("id").takeIf { it.isTextual }?.let { slot.id.append(it.asText()) }
+                    c.path("type").takeIf { it.isTextual }?.let { slot.type = it.asText() }
+                    c.path("function").path("name").takeIf { it.isTextual }?.let { slot.name.append(it.asText()) }
+                    c.path("function").path("arguments").takeIf { it.isTextual }?.let { slot.arguments.append(it.asText()) }
+                }
+                val piece = delta.path("content").takeIf { it.isTextual }?.asText().orEmpty()
+                if (piece.isEmpty()) continue
+                content.append(piece)
+                // Zdanie skończone – mówimy je od razu (o ile model nie woła właśnie narzędzi).
+                if (calls.isEmpty()) {
+                    val end = sentenceEnd(content, spoken)
+                    if (end > spoken) {
+                        content.substring(spoken, end).trim().takeIf { it.isNotEmpty() }?.let(onSentence)
+                        spoken = end
+                    }
+                }
+            }
+        }
+        val reply = MAPPER.createObjectNode().put("role", "assistant").put("content", content.toString())
+        if (reasoning.isNotEmpty()) reply.put("reasoning_content", reasoning.toString())
+        if (calls.isNotEmpty()) {
+            val array = reply.putArray("tool_calls")
+            calls.values.forEach { c ->
+                array.addObject().put("id", c.id.toString()).put("type", c.type)
+                    .putObject("function").put("name", c.name.toString()).put("arguments", c.arguments.toString())
+            }
+        }
+        return reply to content.substring(spoken).trim()
+    }
+
+    /** Wywołanie narzędzia składane z kawałków strumienia ($web_search ma typ „builtin_function”). */
+    private class ToolCall {
+        val id = StringBuilder()
+        var type = "function"
+        val name = StringBuilder()
+        val arguments = StringBuilder()
+    }
+
+    /** Koniec ostatniego pełnego zdania po [from] (kropka, wykrzyknik, pytajnik + spacja); [from], gdy brak. */
+    private fun sentenceEnd(text: CharSequence, from: Int): Int {
+        var end = from
+        for (i in from + MIN_SENTENCE until text.length - 1) {
+            if (text[i] in ".!?" && text[i + 1].isWhitespace() && !text[i - 1].isDigit()) end = i + 1
+        }
+        return end
+    }
+
+    private fun requestBody(messagesSoFar: List<ObjectNode>, model: String = this.model): ObjectNode {
         val body = MAPPER.createObjectNode().put("model", model).put("max_tokens", 2048)
         val messages = body.putArray("messages")
         messages.add(message("system", JarvisTools.SYSTEM_PROMPT))
-        history.forEach { messages.add(it) }
+        messagesSoFar.forEach { messages.add(it) }
         val toolArray = body.putArray("tools")
         JarvisTools.SPECS.forEach { spec ->
             toolArray.add(
@@ -125,7 +237,22 @@ class OpenAiCompatibleBrain(
     companion object {
         const val KIMI_BASE_URL = "https://api.moonshot.ai/v1"
 
+        /** Model kończący odpowiedź po wyszukiwaniu w internecie (k3 tego nie umie). */
+        private const val SEARCH_MODEL = "kimi-k2.6"
+
+        /** Dziennik czasów (podpina warstwa Androida) – do mierzenia, co spowalnia odpowiedź. */
+        @Volatile
+        var timing: ((String) -> Unit)? = null
+
+
+        /** Najkrótszy kawałek mówiony osobno – krótsze zdania doklejamy do następnego. */
+        private const val MIN_SENTENCE = 25
+
+        /** Po tylu ms od ostatniego zapytania połączenie i pamięć podręczna Kimi mogą być już zimne. */
+        private const val WARM_FOR_MS = 60_000L
+
         private val MAPPER = ObjectMapper()
+
         // Domyślne 10 s czekania na pierwszy bajt to za mało: z wyszukiwaniem w internecie Kimi milczy dłużej.
         private val HTTP = OkHttpClient.Builder()
             .connectTimeout(Duration.ofSeconds(15))

@@ -74,7 +74,7 @@ fun SettingsScreen() {
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item { HudLabel("opcje · wersja 0.36", color = Hud.Cyan, size = 13.sp) }
+        item { HudLabel("opcje · wersja 0.37", color = Hud.Cyan, size = 13.sp) }
 
         item {
             HudPanel(modifier = Modifier.fillMaxWidth(), title = "sztuczna inteligencja") {
@@ -98,7 +98,7 @@ fun SettingsScreen() {
                 } else {
                     KeyField("Klucz API Kimi (sk-…)", settings.kimiKey) { v -> update { it.copy(kimiKey = v) } }
                     KeyField("Adres API", settings.kimiBaseUrl, secret = false) { v -> update { it.copy(kimiBaseUrl = v) } }
-                    KeyField("Model (np. kimi-k2.6)", settings.kimiModel, secret = false) { v -> update { it.copy(kimiModel = v) } }
+                    KeyField("Model (najszybszy: kimi-k3.1-pro-highspeed)", settings.kimiModel, secret = false) { v -> update { it.copy(kimiModel = v) } }
                     HudButton(
                         "pobierz modele",
                         onClick = {

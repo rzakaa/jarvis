@@ -9,13 +9,18 @@ import kotlin.math.roundToLong
 
 /** Mózg AI Jarvisa – wspólny interfejs dla różnych dostawców (Claude, Kimi…). */
 interface AiBrain {
-    data class Result(val text: String, val changed: Boolean)
+    /** [rest] – część odpowiedzi jeszcze nie przekazana przez onSentence (bez strumieniowania: całość). */
+    data class Result(val text: String, val changed: Boolean, val rest: String = text)
 
     /**
      * Wysyła wypowiedź do modelu i wykonuje jego narzędzia. Blokuje – wołać poza wątkiem UI.
      * [onSearching] – model zaczął szukać w internecie (to potrwa), można o tym powiedzieć.
+     * [onSentence] – kolejne gotowe zdania odpowiedzi, zanim model skończy pisać (można je już mówić).
      */
-    fun handle(userText: String, onSearching: () -> Unit = {}): Result
+    fun handle(userText: String, onSearching: () -> Unit = {}, onSentence: (String) -> Unit = {}): Result
+
+    /** Nawiązuje połączenie z góry (np. po „Hey Jarvis”), żeby pierwsza odpowiedź przyszła szybciej. */
+    fun warmUp() {}
 
     /** Jednorazowe zadanie bez narzędzi i historii (np. skrót nagrania); odpowiedź w JSON. Blokuje. */
     fun completeJson(system: String, user: String): String

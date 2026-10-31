@@ -12,6 +12,7 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import pl.jarvis.brain.Brain
@@ -98,6 +99,12 @@ object Assistant {
     private val wakeAgain = Runnable { wakeUp() }
     private var awake: PowerManager.WakeLock? = null
 
+    /** Odpowiedź mówiona zdanie po zdaniu w trakcie pisania przez AI. [replyId] odróżnia kolejne odpowiedzi. */
+    private val chunks = ArrayDeque<String>()
+    private var chunkPlaying = false
+    private var streamDone = false
+    private var replyId = 0
+
     /** Jarvis zaproponował poranny przegląd – „nie” kończy rozmowę. */
     private var morningOffer = false
 
@@ -122,6 +129,8 @@ object Assistant {
     /** Ile razy po cichu słuchamy ponownie po „Hey Jarvis”, zanim się poddamy. */
     private const val MAX_RETRIES = 3
 
+    private const val TAG = "JarvisAssistant"
+
     fun init(context: Context) {
         if (appContext != null) return
         val ctx = context.applicationContext
@@ -138,7 +147,7 @@ object Assistant {
         JarvisTools.recordingRead = { day, time -> RecordingNotes.read(ctx, day, time) }
         JarvisTools.recentConversations = { RecordingNotes.recent(ctx) }
         JarvisTools.phone = { name, input -> PhoneTools.run(ctx, name, input) }
-        // Alarmy znikają przy reinstalacji aplikacji – ustawiamy najbliższe przypomnienie od nowa.
+        OpenAiCompatibleBrain.timing = { Log.d(TAG, "${System.currentTimeMillis() % 100_000} $it") }        // Alarmy znikają przy reinstalacji aplikacji – ustawiamy najbliższe przypomnienie od nowa.
         Reminders.schedule(ctx, ledger)
         addMessage(
             ChatMessage(
@@ -189,6 +198,7 @@ object Assistant {
     fun onWakeWord() {
         if (state.value != AssistantState.IDLE) return
         conversation = true
+        ai?.warmUp()
         // Jarvis się odzywa („Słucham?”), a dopiero potem słucha polecenia.
         greeting = true
         say(GREETINGS.random(), show = false)
@@ -325,6 +335,7 @@ object Assistant {
             }
             else -> {
                 conversation = true
+                ai?.warmUp()
                 startListening(isFollowUp = false, delayMs = MIC_HANDOVER_MS)
             }
         }
@@ -421,24 +432,55 @@ object Assistant {
             return
         }
         val name = aiName
+        val id = ++replyId
+        chunks.clear()
+        chunkPlaying = false
+        streamDone = false
+        // Mówienie zdanie po zdaniu – tylko głosem Microsoftu albo Piperem (systemowy mówi całość naraz).
+        val streaming = appContext?.let { CloudVoice.isEnabled(it) || (Prefs.piperVoice(it) && PiperVoice.isReady) } == true
         worker.execute {
             try {
+                val started = System.currentTimeMillis()
+                fun mark(what: String) = Log.d(TAG, "$what po ${System.currentTimeMillis() - started} ms")
                 var announced = false
                 // Rozmowa sprzed chwili jeszcze się przepisuje (zwykle tylko końcówka) – czekamy na nią,
-                // żeby Jarvis wiedział, o czym mówiono.
-                appContext?.let { c ->
+                // żeby Jarvis wiedział, o czym mówiono. Tylko gdy pytanie jej dotyczy – inaczej szkoda czasu.
+                appContext?.takeIf { ABOUT_CONVERSATION.containsMatchIn(text.lowercase()) }?.let { c ->
                     Transcriber.awaitFresh(c, FRESH_WAIT_MS) {
                         announced = true
                         handler.post { if (state.value == AssistantState.THINKING) speakAside("Chwileczkę, przepisuję rozmowę.") }
                     }
                 }
-                val result = brain.handle(forAi) {
-                    if (!announced) {
-                        announced = true
-                        handler.post { if (state.value == AssistantState.THINKING) speakAside("Chwileczkę, sprawdzam.") }
+                mark("rozmowy przepisane")
+                var streamed = false
+                val result = brain.handle(
+                    forAi,
+                    onSearching = {
+                        if (!announced) {
+                            announced = true
+                            handler.post { if (state.value == AssistantState.THINKING) speakAside("Chwileczkę, sprawdzam.") }
+                        }
+                    },
+                    onSentence = { sentence ->
+                        if (streaming) {
+                            if (!streamed) mark("pierwsze zdanie")
+                            streamed = true
+                            announced = true
+                            handler.post { if (replyId == id) enqueueChunk(sentence) }
+                        }
+                    },
+                )
+                mark("cała odpowiedź")
+                handler.post {
+                    if (replyId != id) return@post
+                    if (streamed) {
+                        if (result.changed) dataChanged()
+                        addMessage(ChatMessage(false, result.text, name))
+                        finishStream(result.rest)
+                    } else {
+                        onReply(result.text, result.changed, false, name)
                     }
                 }
-                handler.post { onReply(result.text, result.changed, false, name) }
             } catch (e: Exception) {
                 // Bez internetu albo błąd API – radzimy sobie lokalnymi komendami.
                 handler.post {
@@ -478,6 +520,50 @@ object Assistant {
             } else {
                 speakLocally(text, alarm)
             }
+        }, wait)
+    }
+
+    /** Kolejne zdanie odpowiedzi, która jeszcze się pisze – mówimy od razu, po kolei. */
+    private fun enqueueChunk(text: String) {
+        // Użytkownik przerwał (dotknął reaktora, zaczął mówić) – resztę odpuszczamy.
+        if (state.value != AssistantState.THINKING && state.value != AssistantState.SPEAKING) return
+        chunks.addLast(text)
+        if (!chunkPlaying) playNextChunk()
+    }
+
+    /** Odpowiedź dopisana do końca: [rest] to to, czego jeszcze nie mówiliśmy. */
+    private fun finishStream(rest: String) {
+        if (state.value != AssistantState.THINKING && state.value != AssistantState.SPEAKING) return
+        if (rest.isNotBlank()) chunks.addLast(rest)
+        streamDone = true
+        if (!chunkPlaying) playNextChunk()
+    }
+
+    private fun playNextChunk() {
+        val ctx = appContext
+        val text = chunks.removeFirstOrNull()
+        if (text == null || ctx == null) {
+            chunkPlaying = false
+            if (streamDone) {
+                streamDone = false
+                afterSpeaking()
+            }
+            return
+        }
+        chunkPlaying = true
+        setState(AssistantState.SPEAKING)
+        val wait = (UNMUTE_DELAY_MS + 50 - (System.currentTimeMillis() - listeningEndedAt)).coerceAtLeast(0)
+        handler.postDelayed({
+            if (state.value != AssistantState.SPEAKING) {
+                chunks.clear()
+                chunkPlaying = false
+                return@postDelayed
+            }
+            val next = { playNextChunk() }
+            val piper = {
+                if (Prefs.piperVoice(ctx) && PiperVoice.isReady) PiperVoice.speak(text) { next() } else next()
+            }
+            if (CloudVoice.isEnabled(ctx)) CloudVoice.speak(ctx, text, onDone = next, fallback = piper) else piper()
         }, wait)
     }
 
@@ -670,6 +756,12 @@ object Assistant {
 
     /** Odmowa („nie”, „nie trzeba”, „nie teraz”) – po porannej propozycji kończy rozmowę. */
     private val NO_PHRASES = Regex("^(nie|nie trzeba|nie teraz|nie dzięki|nie dziękuję|daj spokój|później|potem)\\b")
+
+    /** Pytanie o rozmowę sprzed chwili – tylko wtedy czekamy, aż się przepisze. */
+    private val ABOUT_CONVERSATION = Regex(
+        "rozmow|rozmawia|m[óo]wi|powiedzia|gada|o czym|przed chwil|s[łl]ysza|nagra|ustali|wspomin|wspomnia|" +
+            "klient|spotkani|pyta[łl]|obieca|umawia|co (on|ona|oni|one|ten|ta)\\b",
+    )
 
     /** Zwroty kończące rozmowę – po odpowiedzi Jarvis przestaje słuchać. */
     private val END_PHRASES = Regex("^(dzięki|dziękuję|dzieki|dziekuje|to wszystko|koniec|stop|nic|nieważne|niewazne|na razie)\\b")
