@@ -88,6 +88,7 @@ abstract class LiveVoice(
     @Volatile protected var playing = false
         private set
     @Volatile private var complete = false
+    @Volatile private var playEndedAt = 0L
     @Volatile private var playGeneration = 0
     @Volatile private var pendingText: String? = null
     private val toolsRunning = AtomicInteger()
@@ -232,6 +233,8 @@ abstract class LiveVoice(
         val aec = if (AcousticEchoCanceler.isAvailable()) runCatching { AcousticEchoCanceler.create(record.audioSessionId)?.apply { enabled = true } }.getOrNull() else null
         val waiting = ArrayDeque<String>()
         val chunk = ByteArray(rate / 10 * 2)
+        var loud = 0
+        var peak = -90f // najgłośniejsze echo w trakcie mówienia – do logu (strojenie progu)
         try {
             record.startRecording()
             while (!closed && !Thread.currentThread().isInterrupted) {
@@ -241,6 +244,19 @@ abstract class LiveVoice(
                 if (!playing) {
                     main.post { listener.onLevel(((db + 50f) / 30f).coerceIn(0f, 1f)) }
                     if (db > ACTIVE_DB) lastActivity = System.currentTimeMillis()
+                }
+                // Gdy Jarvis mówi, mikrofon słyszy też jego głos z głośnika – model brał to za ciebie
+                // i sam sobie przerywał. Wtedy przepuszczamy tylko wyraźnie głośną mowę (ty, gdy mu
+                // przerywasz – przez [LOUD_CHUNKS] kawałków z rzędu); resztę zastępuje cisza.
+                if (playing || System.currentTimeMillis() - playEndedAt < ECHO_TAIL_MS) {
+                    peak = maxOf(peak, db)
+                    loud = if (db > BARGE_IN_DB) loud + 1 else 0
+                    if (loud == LOUD_CHUNKS) Log.d(TAG, "przerywasz (%.0f dB)".format(db))
+                    if (loud < LOUD_CHUNKS) chunk.fill(0, 0, n)
+                } else {
+                    if (peak > -90f) Log.d(TAG, "echo w trakcie mówienia: do %.0f dB".format(peak))
+                    peak = -90f
+                    loud = LOUD_CHUNKS
                 }
                 val message = audioMessage(Base64.encodeToString(chunk, 0, n, Base64.NO_WRAP))
                 if (!ready) {
@@ -308,6 +324,7 @@ abstract class LiveVoice(
                 // Kolejka pusta, odpowiedź kompletna – czekamy, aż wybrzmi to, co jest w buforze.
                 if (playing && player.playbackHeadPosition.toLong() < written) continue
                 complete = false
+                if (playing) playEndedAt = System.currentTimeMillis()
                 playing = false
                 lastActivity = System.currentTimeMillis()
                 val user = synchronized(userText) { userText.toString().trim().also { userText.clear() } }
@@ -356,6 +373,9 @@ abstract class LiveVoice(
         private const val MIC_HANDOVER_MS = 250L
         private const val MAX_WAITING = 50 // 5 s mowy, zanim połączenie ruszy
         private const val ACTIVE_DB = -42f // głośniej – ktoś mówi (rozmowa trwa)
+        private const val BARGE_IN_DB = -22f // echo Jarvisa z głośnika dochodzi do ok. -24 dB; ty z bliska – głośniej
+        private const val LOUD_CHUNKS = 3 // 300 ms głośnej mowy = przerywasz mu
+        private const val ECHO_TAIL_MS = 400L // echo wybrzmiewa jeszcze chwilę po końcu odpowiedzi
         private const val IDLE_MS = 8_000L // tyle ciszy po odpowiedzi kończy rozmowę
         private const val CONNECT_TIMEOUT_MS = 8_000L
 
