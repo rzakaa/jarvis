@@ -38,6 +38,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import pl.jarvis.assistant.Assistant
 import pl.jarvis.assistant.CloudVoice
+import pl.jarvis.assistant.GeminiLive
 import pl.jarvis.assistant.PhoneTools
 import pl.jarvis.assistant.PiperVoice
 import pl.jarvis.brain.Ledger
@@ -74,7 +75,7 @@ fun SettingsScreen() {
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item { HudLabel("opcje · wersja 0.42", color = Hud.Cyan, size = 13.sp) }
+        item { HudLabel("opcje · wersja 0.43", color = Hud.Cyan, size = 13.sp) }
 
         item {
             HudPanel(modifier = Modifier.fillMaxWidth(), title = "sztuczna inteligencja") {
@@ -202,6 +203,8 @@ fun SettingsScreen() {
             aiTest?.let { Text(it, color = if (it.startsWith("Błąd")) Hud.Red else Hud.Text, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp)) }
         }
 
+        item { LivePanel() }
+
         item { VoicePanel() }
 
         item { PhonePanel() }
@@ -285,6 +288,36 @@ private fun VoicePanel() {
             )
         }
         Hint("Głos działa w telefonie bez internetu. Każdy głos pobierz raz przez Wi-Fi; do tego czasu Jarvis mówi głosem systemowym. Głosy „medium” są szybsze od „bass”.")
+    }
+}
+
+/** Rozmowa na żywo (Gemini Live): klucz, głos i model – zapisane tylko w telefonie. */
+@Composable
+private fun LivePanel() {
+    val context = LocalContext.current
+    var enabled by remember { mutableStateOf(Prefs.geminiLive(context)) }
+    var key by remember { mutableStateOf(Prefs.geminiKey(context)) }
+    var voice by remember { mutableStateOf(Prefs.geminiVoice(context)) }
+    var model by remember { mutableStateOf(Prefs.geminiModel(context)) }
+    fun save() = Prefs.saveGemini(context, enabled, key, voice, model)
+    HudPanel(modifier = Modifier.fillMaxWidth(), title = "rozmowa na żywo · gemini") {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 6.dp)) {
+            HudChip("Włączona", enabled, onClick = { enabled = true; save() })
+            HudChip("Wyłączona", !enabled, onClick = { enabled = false; save() })
+        }
+        KeyField("Klucz Gemini API", key) { key = it; save() }
+        HudLabel("głos", modifier = Modifier.padding(top = 6.dp))
+        GeminiLive.VOICES.chunked(3).forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 4.dp)) {
+                row.forEach { v -> HudChip(v, voice == v, onClick = { voice = v; save() }) }
+            }
+        }
+        KeyField("Model", model, secret = false) { model = it; save() }
+        Hint(
+            "Po „Hey Jarvis” twój głos idzie prosto do Gemini, a jego głos wraca od razu – bez przepisywania na tekst. " +
+                "Mów zaraz po „Hey Jarvis”, możesz mu przerwać w każdej chwili. Klucz: aistudio.google.com → Get API key. " +
+                "Bez klucza albo internetu Jarvis działa jak dotąd. Nasłuch i nagrania dalej przepisuje telefon.",
+        )
     }
 }
 

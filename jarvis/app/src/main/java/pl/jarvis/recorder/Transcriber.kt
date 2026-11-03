@@ -141,6 +141,8 @@ object Transcriber {
                 override fun onReceive(c: Context, intent: Intent) {
                     when (intent.action) {
                         "pl.jarvis.DEBUG_ASK" -> intent.getStringExtra("tekst")?.let { Assistant.submitText(it) }
+                        // DEBUG_LIVE --es tekst "…" – rozmowa na żywo (Gemini) z tekstem zamiast mowy.
+                        "pl.jarvis.DEBUG_LIVE" -> intent.getStringExtra("tekst")?.let { Assistant.debugLive(it) }
                         // DEBUG_PROMISE --es tekst "…" – udawana rozmowa sprzed chwili, do testu wyłapywania obietnic.
                         "pl.jarvis.DEBUG_PROMISE" -> intent.getStringExtra("tekst")?.let { text ->
                             val now = java.time.LocalDateTime.now()
@@ -154,6 +156,7 @@ object Transcriber {
             val filter = IntentFilter("pl.jarvis.DEBUG_TRANSCRIBE").apply {
                 addAction("pl.jarvis.DEBUG_ASK")
                 addAction("pl.jarvis.DEBUG_PROMISE")
+                addAction("pl.jarvis.DEBUG_LIVE")
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) ctx.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
             else ctx.registerReceiver(receiver, filter)

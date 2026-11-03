@@ -138,6 +138,12 @@ object Assistant {
     @Volatile
     private var spokenNow = ""
 
+    /** Rozmowa na żywo przez Gemini (null = zwykła: rozpoznawanie mowy → AI → synteza). */
+    private var live: GeminiLive? = null
+
+    /** Narzędzia dla rozmowy na żywo – te same co u Kimi/Claude, działają na tych samych danych. */
+    private val liveTools by lazy { JarvisTools(ledger) { LocalDateTime.now() } }
+
     fun init(context: Context) {
         if (appContext != null) return
         val ctx = context.applicationContext
@@ -210,6 +216,10 @@ object Assistant {
     fun onWakeWord() {
         if (state.value != AssistantState.IDLE) return
         conversation = true
+        if (appContext?.let { liveReady(it) } == true) {
+            startLive()
+            return
+        }
         ai?.warmUp()
         // Jarvis się odzywa („Słucham?”), a dopiero potem słucha polecenia.
         greeting = true
@@ -333,12 +343,15 @@ object Assistant {
     fun toggleListening() {
         when (state.value) {
             AssistantState.LISTENING -> {
+                if (live != null) return stopLive()
                 conversation = false
                 recognizer?.stopListening()
             }
-            AssistantState.SPEAKING -> silence()
+            AssistantState.SPEAKING -> if (live != null) stopLive() else silence()
             else -> {
+                if (live != null) return stopLive()
                 conversation = true
+                if (appContext?.let { liveReady(it) } == true) return startLive()
                 ai?.warmUp()
                 startListening(isFollowUp = false, delayMs = MIC_HANDOVER_MS)
             }
@@ -348,6 +361,7 @@ object Assistant {
     /** Polecenie napisane zamiast powiedzianego. */
     fun submitText(text: String) {
         if (text.isBlank()) return
+        stopLive()
         conversation = false
         greeting = false
         recognizer?.cancel()
@@ -672,6 +686,92 @@ object Assistant {
         }
     }
 
+    private fun liveReady(ctx: Context) = Prefs.geminiLive(ctx) && Prefs.geminiKey(ctx).isNotBlank()
+
+    /** Test z komputera (DEBUG_LIVE): rozmowa na żywo z tekstem zamiast mowy. */
+    fun debugLive(text: String) {
+        if (state.value == AssistantState.IDLE) startLive(text)
+    }
+
+    /**
+     * Rozmowa na żywo: mikrofon od razu do Gemini, jego głos od razu z powrotem (bez odzewu „Słucham” –
+     * możesz mówić zaraz po „Hey Jarvis”). Bez połączenia – zwykłe słuchanie.
+     */
+    private fun startLive(firstText: String? = null) {
+        val ctx = appContext ?: return
+        PhoneTools.takePending()
+        partial.value = ""
+        greeting = false
+        conversation = true
+        setState(AssistantState.LISTENING)
+        val instruction = JarvisTools.SYSTEM_PROMPT + LIVE_RULES + "\n\n" + liveTools.context() + recentChat()
+        lateinit var session: GeminiLive
+        val listener = object : GeminiLive.Listener {
+            override fun onHeard(text: String) {
+                if (live === session) partial.value = text
+            }
+
+            override fun onSpeaking() {
+                if (live === session) setState(AssistantState.SPEAKING)
+            }
+
+            override fun onTurnDone(user: String, jarvis: String) {
+                if (live !== session) return
+                partial.value = ""
+                if (user.isNotBlank()) addMessage(ChatMessage(true, user))
+                if (jarvis.isNotBlank()) addMessage(ChatMessage(false, jarvis, "gemini"))
+                // Połączenie, nawigacja, otwarcie aplikacji – dopiero po wybrzmieniu odpowiedzi.
+                val action = PhoneTools.takePending()
+                if (action != null) {
+                    stopLive()
+                    runCatching(action).onFailure { addMessage(ChatMessage(false, "Nie udało się: ${it.message}", "telefon")) }
+                    return
+                }
+                if (END_PHRASES.containsMatchIn(user.lowercase())) return stopLive()
+                setState(AssistantState.LISTENING)
+            }
+
+            override fun onLevel(level: Float) {
+                if (live === session && state.value == AssistantState.LISTENING) voiceLevel.value = level
+            }
+
+            override fun onClosed(error: String?, connected: Boolean) {
+                if (live !== session) return
+                live = null
+                if (error != null) addMessage(ChatMessage(false, "Gemini: $error", "gemini – błąd"))
+                // Nie połączyło się wcale (internet, klucz) – słuchamy po staremu.
+                if (error != null && !connected && firstText == null) return startListening(isFollowUp = false)
+                endConversation()
+            }
+        }
+        session = GeminiLive(
+            Prefs.geminiKey(ctx), Prefs.geminiModel(ctx), Prefs.geminiVoice(ctx), instruction,
+            runTool = { name, args ->
+                val (result, changed) = liveTools.run(name, args)
+                if (changed) handler.post { dataChanged() }
+                result
+            },
+            listener = listener,
+        )
+        live = session
+        session.start()
+        firstText?.let { session.sendText(it) }
+    }
+
+    private fun stopLive() {
+        val session = live ?: return
+        live = null
+        session.stop()
+        endConversation()
+    }
+
+    /** Ostatnie wiadomości z czatu – rozmowa na żywo wie, o czym mówiliście przed chwilą. */
+    private fun recentChat(): String {
+        val recent = messages.value.filter { it.fromUser || it.source != null }.takeLast(8)
+        if (recent.isEmpty()) return ""
+        return "\n[Ostatnie wiadomości z czatu:\n" + recent.joinToString("\n") { (if (it.fromUser) "Ty: " else "Jarvis: ") + it.text } + "]"
+    }
+
     /** Przerwanie w pół zdania (dotknięcie reaktora albo „stop”): cisza i koniec rozmowy. */
     private fun silence() {
         if (state.value != AssistantState.SPEAKING) return
@@ -697,7 +797,8 @@ object Assistant {
         if (newState == AssistantState.SPEAKING) {
             if (!wasSpeaking) handler.postDelayed({
                 val ctx = appContext
-                if (ctx != null && state.value == AssistantState.SPEAKING) BargeIn.start(ctx, { spokenNow }) { silence() }
+                // W rozmowie na żywo mikrofon ma Gemini – sam słyszy, że mu przerywasz.
+                if (ctx != null && state.value == AssistantState.SPEAKING && live == null) BargeIn.start(ctx, { spokenNow }) { silence() }
             }, BARGE_IN_DELAY_MS)
         } else if (wasSpeaking) {
             BargeIn.stop()
@@ -807,6 +908,11 @@ object Assistant {
         "rozmow|rozmawia|m[óo]wi|powiedzia|gada|o czym|przed chwil|s[łl]ysza|nagra|ustali|wspomin|wspomnia|" +
             "klient|spotkani|pyta[łl]|obieca|umawia|co (on|ona|oni|one|ten|ta)\\b",
     )
+
+    /** Dopisek do osobowości na rozmowę głosem na żywo. */
+    private const val LIVE_RULES = "\n\nRozmawiasz z użytkownikiem głosem, na żywo. Mów zawsze po polsku, krótko i naturalnie " +
+        "jak w rozmowie – bez list, nagłówków, emotek i numerów #id. Gdy sprawdzasz coś narzędziem albo w internecie, " +
+        "możesz rzucić krótkie „sekunda”."
 
     /** Zwroty kończące rozmowę – po odpowiedzi Jarvis przestaje słuchać. */
     private val END_PHRASES = Regex("^(dzięki|dziękuję|dzieki|dziekuje|to wszystko|koniec|stop|nic|nieważne|niewazne|na razie)\\b")
