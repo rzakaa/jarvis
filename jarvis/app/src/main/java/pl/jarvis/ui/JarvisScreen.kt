@@ -158,7 +158,7 @@ fun JarvisScreen() {
                 AssistantState.THINKING -> "przetwarzam…"
                 AssistantState.SPEAKING -> "mówię…"
             },
-            color = if (state == AssistantState.LISTENING) Hud.CyanBright else Hud.CyanDim,
+            color = if (state == AssistantState.LISTENING) Hud.Green else Hud.CyanDim,
             size = 12.sp,
             align = TextAlign.Center,
             modifier = Modifier.padding(bottom = 8.dp),

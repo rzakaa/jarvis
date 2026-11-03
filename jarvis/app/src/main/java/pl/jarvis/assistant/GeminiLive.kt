@@ -83,7 +83,7 @@ class GeminiLive(
         const val DEFAULT_VOICE = "Charon"
 
         /** Głosy Gemini do wyboru w Opcjach (męskie pierwsze – Jarvis). */
-        val VOICES = listOf("Charon", "Orus", "Fenrir", "Puck", "Kore", "Aoede")
+        val VOICES = listOf("Charon", "Orus", "Fenrir", "Iapetus", "Algenib", "Rasalgethi", "Schedar", "Alnilam", "Puck", "Kore", "Aoede")
 
         /** Gemini chce typów wielkimi literami („STRING”), narzędzia Jarvisa mają małe. */
         private fun upperTypes(value: Any?): Any? = when (value) {

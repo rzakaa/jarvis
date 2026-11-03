@@ -3,7 +3,6 @@ package pl.jarvis.assistant
 import android.content.Context
 import android.content.Intent
 import android.media.AudioManager
-import android.media.ToneGenerator
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -709,12 +708,8 @@ object Assistant {
         greeting = false
         conversation = true
         setState(AssistantState.LISTENING)
-        // Krótki sygnał „słucham” – bez niego po „Hey Jarvis” nie wiadomo było, że już można mówić.
-        runCatching {
-            val tone = ToneGenerator(AudioManager.STREAM_MUSIC, 70)
-            tone.startTone(ToneGenerator.TONE_PROP_ACK, 150)
-            handler.postDelayed({ tone.release() }, 400)
-        }
+        // Dźwięk aktywacji – bez niego po „Hey Jarvis” nie wiadomo było, że już można mówić.
+        StartSound.play()
         val liveName = if (Prefs.liveProvider(ctx) == "gemini") "gemini" else "chatgpt"
         val instruction = JarvisTools.SYSTEM_PROMPT + LIVE_RULES + "\n\n" + liveTools.context() + recentChat()
         lateinit var session: LiveVoice
@@ -945,7 +940,8 @@ object Assistant {
     /** Dopisek do osobowości na rozmowę głosem na żywo. */
     private const val LIVE_RULES = "\n\nRozmawiasz z użytkownikiem głosem, na żywo. Mów zawsze po polsku, krótko i naturalnie " +
         "jak w rozmowie – bez list, nagłówków, emotek i numerów #id. Gdy sprawdzasz coś narzędziem albo w internecie, " +
-        "możesz rzucić krótkie „sekunda”."
+        "możesz rzucić krótkie „sekunda”. Ton głosu: spokojny, pewny siebie, z lekką brytyjską ironią – jak elegancki " +
+        "kamerdyner z gadżetami, który zna cię od lat; dalej po kumpelsku i na luzie, bez sztywnych formułek."
 
     /** Zwroty kończące rozmowę – po odpowiedzi Jarvis przestaje słuchać. */
     private val END_PHRASES = Regex("^(dzięki|dziękuję|dzieki|dziekuje|to wszystko|koniec|stop|nic|nieważne|niewazne|na razie)\\b")

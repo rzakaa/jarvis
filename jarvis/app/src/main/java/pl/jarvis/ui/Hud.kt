@@ -193,7 +193,7 @@ fun ArcReactor(level: Float, mode: ReactorMode, size: Dp, modifier: Modifier = M
     val smoothLevel by animateFloatAsState(level.coerceIn(0f, 1f), tween(120), label = "level")
     val color = when (mode) {
         ReactorMode.IDLE -> Hud.Cyan
-        ReactorMode.LISTENING -> Hud.CyanBright
+        ReactorMode.LISTENING -> Hud.Green // słucha – inny kolor niż spoczynek i mówienie
         ReactorMode.THINKING -> Hud.Amber
         ReactorMode.SPEAKING -> Hud.CyanBright
     }
