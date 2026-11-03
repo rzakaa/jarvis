@@ -139,7 +139,7 @@ object Assistant {
     private var spokenNow = ""
 
     /** Rozmowa na żywo przez Gemini (null = zwykła: rozpoznawanie mowy → AI → synteza). */
-    private var live: GeminiLive? = null
+    private var live: LiveVoice? = null
 
     /** Narzędzia dla rozmowy na żywo – te same co u Kimi/Claude, działają na tych samych danych. */
     private val liveTools by lazy { JarvisTools(ledger) { LocalDateTime.now() } }
@@ -686,7 +686,11 @@ object Assistant {
         }
     }
 
-    private fun liveReady(ctx: Context) = Prefs.geminiLive(ctx) && Prefs.geminiKey(ctx).isNotBlank()
+    private fun liveReady(ctx: Context) = when (Prefs.liveProvider(ctx)) {
+        "openai" -> Prefs.openaiKey(ctx).isNotBlank()
+        "gemini" -> Prefs.geminiKey(ctx).isNotBlank()
+        else -> false
+    }
 
     /** Test z komputera (DEBUG_LIVE): rozmowa na żywo z tekstem zamiast mowy. */
     fun debugLive(text: String) {
@@ -704,9 +708,10 @@ object Assistant {
         greeting = false
         conversation = true
         setState(AssistantState.LISTENING)
+        val liveName = if (Prefs.liveProvider(ctx) == "gemini") "gemini" else "chatgpt"
         val instruction = JarvisTools.SYSTEM_PROMPT + LIVE_RULES + "\n\n" + liveTools.context() + recentChat()
-        lateinit var session: GeminiLive
-        val listener = object : GeminiLive.Listener {
+        lateinit var session: LiveVoice
+        val listener = object : LiveVoice.Listener {
             override fun onHeard(text: String) {
                 if (live === session) partial.value = text
             }
@@ -719,7 +724,7 @@ object Assistant {
                 if (live !== session) return
                 partial.value = ""
                 if (user.isNotBlank()) addMessage(ChatMessage(true, user))
-                if (jarvis.isNotBlank()) addMessage(ChatMessage(false, jarvis, "gemini"))
+                if (jarvis.isNotBlank()) addMessage(ChatMessage(false, jarvis, liveName))
                 // Połączenie, nawigacja, otwarcie aplikacji – dopiero po wybrzmieniu odpowiedzi.
                 val action = PhoneTools.takePending()
                 if (action != null) {
@@ -738,25 +743,46 @@ object Assistant {
             override fun onClosed(error: String?, connected: Boolean) {
                 if (live !== session) return
                 live = null
-                if (error != null) addMessage(ChatMessage(false, "Gemini: $error", "gemini – błąd"))
+                if (error != null) addMessage(ChatMessage(false, "Rozmowa na żywo: $error", "$liveName – błąd"))
                 // Nie połączyło się wcale (internet, klucz) – słuchamy po staremu.
                 if (error != null && !connected && firstText == null) return startListening(isFollowUp = false)
                 endConversation()
             }
         }
-        session = GeminiLive(
-            Prefs.geminiKey(ctx), Prefs.geminiModel(ctx), Prefs.geminiVoice(ctx), instruction,
-            runTool = { name, args ->
+        val runTool = { name: String, args: Map<String, Any?> ->
+            if (name == SEARCH_TOOL.name) {
+                search(ctx, args["pytanie"] as? String ?: "")
+            } else {
                 val (result, changed) = liveTools.run(name, args)
                 if (changed) handler.post { dataChanged() }
                 result
-            },
-            listener = listener,
-        )
+            }
+        }
+        session = if (Prefs.liveProvider(ctx) == "gemini") {
+            GeminiLive(Prefs.geminiKey(ctx), Prefs.geminiModel(ctx), Prefs.geminiVoice(ctx), instruction, runTool, listener)
+        } else {
+            // ChatGPT nie ma wbudowanej wyszukiwarki – szuka za niego Kimi (gdy jest klucz).
+            val search = if (Prefs.kimiKey(ctx).isNotBlank()) listOf(SEARCH_TOOL) else emptyList()
+            OpenAiRealtime(Prefs.openaiKey(ctx), Prefs.openaiModel(ctx), Prefs.openaiVoice(ctx), instruction, search, runTool, listener)
+        }
         live = session
         session.start()
         firstText?.let { session.sendText(it) }
     }
+
+    /** Szukanie w internecie dla ChatGPT na żywo – robi je Kimi (ma wbudowaną wyszukiwarkę). */
+    private fun search(ctx: Context, question: String): String {
+        val s = Prefs.assistantSettings(ctx)
+        val kimi = OpenAiCompatibleBrain(s.kimiKey, s.kimiBaseUrl, s.kimiModel.ifBlank { OpenAiCompatibleBrain.SEARCH_MODEL }, Ledger())
+        return kimi.handle("Wyszukaj w internecie i odpowiedz krótko, konkretnie, z liczbami i datami: $question").text
+    }
+
+    private val SEARCH_TOOL = JarvisTools.Spec(
+        "szukaj_w_internecie",
+        "Szuka aktualnych informacji w internecie (wiadomości, ceny, godziny otwarcia, wyniki, fakty). Zwraca krótką odpowiedź.",
+        mapOf("pytanie" to mapOf("type" to "string", "description" to "Czego szukać, pełnym zdaniem po polsku.")),
+        listOf("pytanie"),
+    )
 
     private fun stopLive() {
         val session = live ?: return

@@ -5,6 +5,7 @@ import android.media.MediaRecorder
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import pl.jarvis.assistant.GeminiLive
+import pl.jarvis.assistant.OpenAiRealtime
 import java.io.File
 
 const val SILENCE_DB = -90f
@@ -198,8 +199,8 @@ object Prefs {
     fun addClaudeSpent(context: Context, dollars: Double) = prefs(context).edit()
         .putFloat("claude_spent", (claudeSpent(context) + dollars).toFloat()).apply()
 
-    /** Rozmowa na żywo przez Gemini Live: głos prosto do modelu i z powrotem (bez przepisywania). */
-    fun geminiLive(context: Context) = prefs(context).getBoolean("gemini_live", true)
+    /** Rozmowa na żywo (głos prosto do modelu i z powrotem): „openai” (ChatGPT), „gemini” albo „off”. */
+    fun liveProvider(context: Context) = prefs(context).getString("live_provider", null) ?: "openai"
 
     fun geminiKey(context: Context) = prefs(context).getString("gemini_key", "").orEmpty()
 
@@ -207,9 +208,20 @@ object Prefs {
 
     fun geminiModel(context: Context) = prefs(context).getString("gemini_model", null)?.takeIf { it.isNotBlank() } ?: GeminiLive.DEFAULT_MODEL
 
-    fun saveGemini(context: Context, enabled: Boolean, key: String, voice: String, model: String) = prefs(context).edit()
-        .putBoolean("gemini_live", enabled).putString("gemini_key", key.trim())
-        .putString("gemini_voice", voice).putString("gemini_model", model.trim()).apply()
+    fun openaiKey(context: Context) = prefs(context).getString("openai_key", "").orEmpty()
+
+    fun openaiVoice(context: Context) = prefs(context).getString("openai_voice", null) ?: OpenAiRealtime.DEFAULT_VOICE
+
+    fun openaiModel(context: Context) = prefs(context).getString("openai_model", null)?.takeIf { it.isNotBlank() } ?: OpenAiRealtime.DEFAULT_MODEL
+
+    fun saveLive(context: Context, provider: String, key: String, voice: String, model: String) {
+        val edit = prefs(context).edit().putString("live_provider", provider)
+        when (provider) {
+            "openai" -> edit.putString("openai_key", key.trim()).putString("openai_voice", voice).putString("openai_model", model.trim())
+            "gemini" -> edit.putString("gemini_key", key.trim()).putString("gemini_voice", voice).putString("gemini_model", model.trim())
+        }
+        edit.apply()
+    }
 
     fun saveAzure(context: Context, key: String, region: String, voiceName: String) = prefs(context).edit()
         .putString("azure_key", key.trim()).putString("azure_region", region.trim().lowercase().replace(" ", ""))

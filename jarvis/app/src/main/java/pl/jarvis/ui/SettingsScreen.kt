@@ -39,6 +39,7 @@ import kotlinx.coroutines.withContext
 import pl.jarvis.assistant.Assistant
 import pl.jarvis.assistant.CloudVoice
 import pl.jarvis.assistant.GeminiLive
+import pl.jarvis.assistant.OpenAiRealtime
 import pl.jarvis.assistant.PhoneTools
 import pl.jarvis.assistant.PiperVoice
 import pl.jarvis.brain.Ledger
@@ -75,7 +76,7 @@ fun SettingsScreen() {
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item { HudLabel("opcje · wersja 0.43", color = Hud.Cyan, size = 13.sp) }
+        item { HudLabel("opcje · wersja 0.44", color = Hud.Cyan, size = 13.sp) }
 
         item {
             HudPanel(modifier = Modifier.fillMaxWidth(), title = "sztuczna inteligencja") {
@@ -291,31 +292,44 @@ private fun VoicePanel() {
     }
 }
 
-/** Rozmowa na żywo (Gemini Live): klucz, głos i model – zapisane tylko w telefonie. */
+/** Rozmowa na żywo (ChatGPT albo Gemini): klucz, głos i model – zapisane tylko w telefonie. */
 @Composable
 private fun LivePanel() {
     val context = LocalContext.current
-    var enabled by remember { mutableStateOf(Prefs.geminiLive(context)) }
-    var key by remember { mutableStateOf(Prefs.geminiKey(context)) }
-    var voice by remember { mutableStateOf(Prefs.geminiVoice(context)) }
-    var model by remember { mutableStateOf(Prefs.geminiModel(context)) }
-    fun save() = Prefs.saveGemini(context, enabled, key, voice, model)
-    HudPanel(modifier = Modifier.fillMaxWidth(), title = "rozmowa na żywo · gemini") {
+    var provider by remember { mutableStateOf(Prefs.liveProvider(context)) }
+    fun keyOf(p: String) = if (p == "gemini") Prefs.geminiKey(context) else Prefs.openaiKey(context)
+    fun voiceOf(p: String) = if (p == "gemini") Prefs.geminiVoice(context) else Prefs.openaiVoice(context)
+    fun modelOf(p: String) = if (p == "gemini") Prefs.geminiModel(context) else Prefs.openaiModel(context)
+    var key by remember { mutableStateOf(keyOf(provider)) }
+    var voice by remember { mutableStateOf(voiceOf(provider)) }
+    var model by remember { mutableStateOf(modelOf(provider)) }
+    fun save() = Prefs.saveLive(context, provider, key, voice, model)
+    fun choose(p: String) {
+        provider = p
+        Prefs.saveLive(context, p, keyOf(p), voiceOf(p), modelOf(p))
+        key = keyOf(p); voice = voiceOf(p); model = modelOf(p)
+    }
+    HudPanel(modifier = Modifier.fillMaxWidth(), title = "rozmowa na żywo") {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 6.dp)) {
-            HudChip("Włączona", enabled, onClick = { enabled = true; save() })
-            HudChip("Wyłączona", !enabled, onClick = { enabled = false; save() })
+            HudChip("ChatGPT", provider == "openai", onClick = { choose("openai") })
+            HudChip("Gemini", provider == "gemini", onClick = { choose("gemini") })
+            HudChip("Wyłączona", provider == "off", onClick = { choose("off") })
         }
-        KeyField("Klucz Gemini API", key) { key = it; save() }
-        HudLabel("głos", modifier = Modifier.padding(top = 6.dp))
-        GeminiLive.VOICES.chunked(3).forEach { row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 4.dp)) {
-                row.forEach { v -> HudChip(v, voice == v, onClick = { voice = v; save() }) }
+        if (provider != "off") {
+            KeyField(if (provider == "gemini") "Klucz Gemini API" else "Klucz OpenAI API", key) { key = it; save() }
+            HudLabel("głos", modifier = Modifier.padding(top = 6.dp))
+            (if (provider == "gemini") GeminiLive.VOICES else OpenAiRealtime.VOICES).chunked(3).forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 4.dp)) {
+                    row.forEach { v -> HudChip(v, voice == v, onClick = { voice = v; save() }) }
+                }
             }
+            KeyField("Model", model, secret = false) { model = it; save() }
         }
-        KeyField("Model", model, secret = false) { model = it; save() }
         Hint(
-            "Po „Hey Jarvis” twój głos idzie prosto do Gemini, a jego głos wraca od razu – bez przepisywania na tekst. " +
-                "Mów zaraz po „Hey Jarvis”, możesz mu przerwać w każdej chwili. Klucz: aistudio.google.com → Get API key. " +
+            "Po „Hey Jarvis” twój głos idzie prosto do modelu, a jego głos wraca od razu – bez przepisywania na tekst. " +
+                "Mów zaraz po „Hey Jarvis”, możesz mu przerwać w każdej chwili. " +
+                (if (provider == "gemini") "Klucz: aistudio.google.com → Get API key (trzeba włączyć płatności). "
+                else "Klucz: platform.openai.com → API keys (konto z doładowaniem). Model tańszy: gpt-realtime-2.1-mini. ") +
                 "Bez klucza albo internetu Jarvis działa jak dotąd. Nasłuch i nagrania dalej przepisuje telefon.",
         )
     }

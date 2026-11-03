@@ -244,7 +244,7 @@ class OpenAiCompatibleBrain(
         private fun noThinking(model: String) = !model.startsWith("kimi-k3")
 
         /** Model kończący odpowiedź po wyszukiwaniu w internecie (k3 tego nie umie). */
-        private const val SEARCH_MODEL = "kimi-k2.6"
+        const val SEARCH_MODEL = "kimi-k2.6"
 
         /** Dziennik czasów (podpina warstwa Androida) – do mierzenia, co spowalnia odpowiedź. */
         @Volatile
