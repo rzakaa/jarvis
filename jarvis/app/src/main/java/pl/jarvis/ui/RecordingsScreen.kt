@@ -98,7 +98,7 @@ fun RecordingsScreen() {
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item { HudLabel("rejestrator rozmów · wersja 0.45", color = Hud.Cyan, size = 13.sp) }
+        item { HudLabel("rejestrator rozmów · wersja 0.46", color = Hud.Cyan, size = 13.sp) }
         item { StatusPanel(status, onToggle) }
         item { SettingsPanel(status) }
         error?.let { message -> item { Text(message, color = Hud.Red, fontSize = 14.sp) } }

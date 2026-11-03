@@ -64,6 +64,7 @@ class GeminiLive(
         }
         msg.get("toolCall")?.path("functionCalls")?.forEach { callTool(it.path("id").asText(), it.path("name").asText(), it.path("args")) }
         msg.get("goAway")?.let { finish(null) }
+        msg.get("usageMetadata")?.let { android.util.Log.d(TAG, "zużycie: $it") }
     }
 
     override fun toolResult(id: String, name: String, result: String): List<String> {

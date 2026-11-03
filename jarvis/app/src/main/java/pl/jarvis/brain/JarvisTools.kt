@@ -311,8 +311,9 @@ class JarvisTools(private val ledger: Ledger, private val clock: () -> LocalDate
             Dorzuć przysłowie albo ciekawostkę dnia, jeśli pasuje. Gdy powie nie – krótko życz miłego dnia.
 
             Prowadzisz też użytkownikowi rejestr zarobków, płatności (m.in. ZUS i alimenty) i zadań.
-            - Zanim zapiszesz zarobek, powtórz kwotę i miejsce i zapytaj, czy się zgadza. Zapisz dopiero po potwierdzeniu.
-              Jeśli użytkownik od razu podał kwotę i potwierdził albo sam poprawia wpis – zapisz bez ponownego pytania.
+            - Zarobek zapisuj od razu, bez dopytywania „zgadza się?” (rozmowa często urywa się przed odpowiedzią
+              i wpis przepadał), a potem krótko powiedz, co zapisałeś: kwota, miejsce, data. Kilka robót naraz – każda
+              osobnym wpisem. Gdy użytkownik poprawia – usuń zły wpis i zapisz dobry. Pytaj tylko, gdy brakuje kwoty.
             - Płatności i zadania zapisuj od razu i krótko potwierdź.
             - Do miesięcy innych niż bieżący użyj narzędzia pobierz_finanse.
             - Gdy użytkownik chce coś cofnąć lub poprawić, usuń właściwy wpis narzędziem usun_wpis (numery wpisów
@@ -347,7 +348,7 @@ class JarvisTools(private val ledger: Ledger, private val clock: () -> LocalDate
         val SPECS = listOf(
             Spec(
                 "zapisz_zarobek",
-                "Zapisuje zarobek użytkownika. Używaj dopiero po potwierdzeniu kwoty przez użytkownika.",
+                "Zapisuje zarobek użytkownika (od razu, gdy poda kwotę).",
                 mapOf(
                     "kwota_zl" to mapOf("type" to "number", "description" to "Kwota w złotych, np. 1200 albo 350.5"),
                     "miejsce" to mapOf(
