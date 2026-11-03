@@ -27,4 +27,4 @@ ONNX Runtime (1.24.3) musi pasować do AAR-a sherpa-onnx (1.13.0), więc nie zmi
 
 ## Wersja
 
-0.49 (versionCode 49)
+0.50 (versionCode 50)
