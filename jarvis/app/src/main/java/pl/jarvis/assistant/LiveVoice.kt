@@ -172,6 +172,7 @@ abstract class LiveVoice(
         if (text.isEmpty()) return
         lastActivity = System.currentTimeMillis()
         val all = synchronized(userText) { userText.append(text).toString() }
+        Log.d(TAG, "słyszę: ${all.trim()}")
         main.post { listener.onHeard(all.trim()) }
     }
 

@@ -3,6 +3,7 @@ package pl.jarvis.assistant
 import android.content.Context
 import android.content.Intent
 import android.media.AudioManager
+import android.media.ToneGenerator
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -708,6 +709,12 @@ object Assistant {
         greeting = false
         conversation = true
         setState(AssistantState.LISTENING)
+        // Krótki sygnał „słucham” – bez niego po „Hey Jarvis” nie wiadomo było, że już można mówić.
+        runCatching {
+            val tone = ToneGenerator(AudioManager.STREAM_MUSIC, 70)
+            tone.startTone(ToneGenerator.TONE_PROP_ACK, 150)
+            handler.postDelayed({ tone.release() }, 400)
+        }
         val liveName = if (Prefs.liveProvider(ctx) == "gemini") "gemini" else "chatgpt"
         val instruction = JarvisTools.SYSTEM_PROMPT + LIVE_RULES + "\n\n" + liveTools.context() + recentChat()
         lateinit var session: LiveVoice
