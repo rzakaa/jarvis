@@ -253,6 +253,8 @@ class RecorderService : Service() {
                 if (frameCounter % 33 == 0) Log.d("JarvisMic", "db=%.1f wake=%.3f".format(db, wakePeak))
                 if (wakeWord != null) {
                     if (wakeWord.process(frame)) mainHandler.post { Assistant.onWakeWord() }
+                    // „Prawie” – do strojenia czułości: jak blisko progu był niewykryty „Hey Jarvis”.
+                    if (wakeWord.lastScore > 0.15f && wakeWord.lastScore > wakePeak) Log.d("JarvisWake", "wynik %.2f".format(wakeWord.lastScore))
                     // Podgląd: szczyt wyniku, powoli opadający (żeby dało się go odczytać na ekranie).
                     wakePeak = maxOf(wakeWord.lastScore, wakePeak * 0.985f)
                     if (frameCounter % 3 == 0) RecorderState.wakeScore.value = wakePeak
