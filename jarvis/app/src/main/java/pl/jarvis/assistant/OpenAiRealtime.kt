@@ -42,9 +42,8 @@ class OpenAiRealtime(
         input.putObject("format").put("type", "audio/pcm").put("rate", inRate)
         input.putObject("transcription").put("model", "gpt-4o-mini-transcribe").put("language", "pl")
         input.putObject("noise_reduction").put("type", "far_field")
-        // Wyższy próg – resztka echa z głośnika nie przerywa Jarvisowi.
-        input.putObject("turn_detection").put("type", "server_vad").put("threshold", 0.6)
-            .put("prefix_padding_ms", 300).put("silence_duration_ms", 500)
+        // Model sam ocenia, czy skończyłeś myśl; „low” – daje czas na namysł zamiast wcinać się w każdą pauzę.
+        input.putObject("turn_detection").put("type", "semantic_vad").put("eagerness", "low")
             .put("create_response", true).put("interrupt_response", true)
         val output = audio.putObject("output")
         output.putObject("format").put("type", "audio/pcm").put("rate", LiveVoice.OUT_RATE)

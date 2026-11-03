@@ -36,10 +36,12 @@ class GeminiLive(
         tools.addObject().putObject("googleSearch")
         setup.putObject("inputAudioTranscription")
         setup.putObject("outputAudioTranscription")
-        // Mniej czuły start mowy – resztka echa z głośnika nie przerywa Jarvisowi.
+        // Mniej czuły start mowy – resztka echa z głośnika nie przerywa Jarvisowi. Koniec mowy: dopiero
+        // po 1,2 s ciszy i mało czule – przy 0,6 s wcinał się w każdą chwilę namysłu.
         setup.putObject("realtimeInputConfig").putObject("automaticActivityDetection")
             .put("startOfSpeechSensitivity", "START_SENSITIVITY_LOW")
-            .put("silenceDurationMs", 600)
+            .put("endOfSpeechSensitivity", "END_SENSITIVITY_LOW")
+            .put("silenceDurationMs", 1200)
         setup.putObject("contextWindowCompression").putObject("slidingWindow")
         return MAPPER.writeValueAsString(root)
     }
