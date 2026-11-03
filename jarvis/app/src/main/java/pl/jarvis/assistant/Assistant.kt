@@ -141,6 +141,12 @@ object Assistant {
     /** Rozmowa na żywo przez Gemini (null = zwykła: rozpoznawanie mowy → AI → synteza). */
     private var live: LiveVoice? = null
 
+    /** Próbka głosu z Opcji (null = nie gra). */
+    private var preview: LiveVoice? = null
+
+    /** Błąd próbki głosu – do pokazania w Opcjach. */
+    val previewStatus = MutableStateFlow<String?>(null)
+
     /** Narzędzia dla rozmowy na żywo – te same co u Kimi/Claude, działają na tych samych danych. */
     private val liveTools by lazy { JarvisTools(ledger) { LocalDateTime.now() } }
 
@@ -785,6 +791,46 @@ object Assistant {
         mapOf("pytanie" to mapOf("type" to "string", "description" to "Czego szukać, pełnym zdaniem po polsku.")),
         listOf("pytanie"),
     )
+
+    /** Próbka głosu z Opcji: Jarvis przedstawia się wybranym głosem (bez mikrofonu; ok. 3 grosze). */
+    fun previewVoice(provider: String, voice: String) {
+        val ctx = appContext ?: return
+        if (state.value != AssistantState.IDLE) return
+        preview?.stop()
+        previewStatus.value = "łączę…"
+        val instruction = "Jesteś J.A.R.V.I.S., osobisty asystent głosowy. Mówisz po polsku, spokojnie, " +
+            "z lekką brytyjską ironią, po kumpelsku."
+        lateinit var session: LiveVoice
+        val listener = object : LiveVoice.Listener {
+            override fun onHeard(text: String) {}
+
+            override fun onSpeaking() {
+                if (preview === session) previewStatus.value = "gra: $voice"
+            }
+
+            override fun onTurnDone(user: String, jarvis: String) = session.stop()
+
+            override fun onLevel(level: Float) {}
+
+            override fun onClosed(error: String?, connected: Boolean) {
+                if (preview !== session) return
+                preview = null
+                previewStatus.value = error?.let { "Błąd: $it" }
+                RecorderState.micPaused.value = state.value != AssistantState.IDLE
+            }
+        }
+        val noTools = { _: String, _: Map<String, Any?> -> "" }
+        session = if (provider == "gemini") {
+            GeminiLive(Prefs.geminiKey(ctx), Prefs.geminiModel(ctx), voice, instruction, noTools, listener, useMic = false)
+        } else {
+            OpenAiRealtime(Prefs.openaiKey(ctx), Prefs.openaiModel(ctx), voice, instruction, emptyList(), noTools, listener, useMic = false)
+        }
+        preview = session
+        // Rejestrator nie nagrywa próbki z głośnika.
+        RecorderState.micPaused.value = true
+        session.start()
+        session.sendText("Przedstaw się jednym, dwoma krótkimi zdaniami – to próbka twojego głosu.")
+    }
 
     private fun stopLive() {
         val session = live ?: return

@@ -17,7 +17,8 @@ class OpenAiRealtime(
     private val extraTools: List<JarvisTools.Spec>,
     runTool: (String, Map<String, Any?>) -> String,
     listener: Listener,
-) : LiveVoice(runTool, listener) {
+    useMic: Boolean = true,
+) : LiveVoice(runTool, listener, useMic) {
 
     override val inRate = 24_000 // Realtime przyjmuje tylko 24 kHz
 

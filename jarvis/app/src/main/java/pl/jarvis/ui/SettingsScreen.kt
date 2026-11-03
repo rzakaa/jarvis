@@ -76,7 +76,7 @@ fun SettingsScreen() {
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item { HudLabel("opcje · wersja 0.51", color = Hud.Cyan, size = 13.sp) }
+        item { HudLabel("opcje · wersja 0.52", color = Hud.Cyan, size = 13.sp) }
 
         item {
             HudPanel(modifier = Modifier.fillMaxWidth(), title = "sztuczna inteligencja") {
@@ -323,6 +323,16 @@ private fun LivePanel() {
                     row.forEach { v -> HudChip(v, voice == v, onClick = { voice = v; save() }) }
                 }
             }
+            val previewStatus by Assistant.previewStatus.collectAsState()
+            HudButton(
+                "▶ posłuchaj: $voice",
+                onClick = {
+                    save()
+                    Assistant.previewVoice(provider, voice)
+                },
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+            )
+            previewStatus?.let { Text(it, color = if (it.startsWith("Błąd")) Hud.Red else Hud.TextDim, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp)) }
             KeyField("Model", model, secret = false) { model = it; save() }
         }
         Hint(

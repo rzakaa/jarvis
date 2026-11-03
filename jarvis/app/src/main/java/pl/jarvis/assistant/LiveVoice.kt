@@ -38,6 +38,8 @@ import kotlin.math.sqrt
 abstract class LiveVoice(
     private val runTool: (String, Map<String, Any?>) -> String,
     private val listener: Listener,
+    /** false – bez mikrofonu (próbka głosu w Opcjach). */
+    private val useMic: Boolean = true,
 ) {
     interface Listener {
         /** Słyszę cię (tekst tego, co mówisz – do podglądu). */
@@ -119,7 +121,7 @@ abstract class LiveVoice(
                 finish(response?.let { "HTTP ${it.code}" + if (it.code == 401) " – zły klucz" else "" } ?: t.message ?: t.javaClass.simpleName)
             }
         })
-        micThread = Thread({ listen() }, "jarvis-live-mic").apply { start() }
+        if (useMic) micThread = Thread({ listen() }, "jarvis-live-mic").apply { start() }
         playThread = Thread({ play() }, "jarvis-live-play").apply { start() }
         main.postDelayed(watchdog, 1000)
     }

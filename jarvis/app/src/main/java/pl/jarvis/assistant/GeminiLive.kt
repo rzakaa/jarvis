@@ -12,7 +12,8 @@ class GeminiLive(
     private val instruction: String,
     runTool: (String, Map<String, Any?>) -> String,
     listener: Listener,
-) : LiveVoice(runTool, listener) {
+    useMic: Boolean = true,
+) : LiveVoice(runTool, listener, useMic) {
 
     override val inRate = 16_000
 
